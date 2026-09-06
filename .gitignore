@@ -22,3 +22,34 @@ src-tauri/lib/
 !*.key.pub
 .env
 .env.local
+
+# ---- macOS port: additional belt-and-braces ignores -----------------------
+# Certificates and key material of every shape. .keys/ and *.key are covered
+# above; these are the formats Apple signing introduces.
+*.pem
+*.p12
+*.pfx
+*.cer
+*.crt
+*.mobileprovision
+*.provisionprofile
+
+# Every .env variant, not just .env.local.
+.env.*
+!.env.example
+
+# Out-of-tree Cargo target dir used by this workspace.
+cargo-target/
+
+# Build products. A .app or .dmg belongs in a release, never in the repo.
+*.app/
+*.dmg
+*.pkg
+*.msi
+*.exe
+*.dylib
+*.so
+
+# Logs and CI artifacts pulled down for inspection.
+*.log
+/macOS-CI-Artifacts/

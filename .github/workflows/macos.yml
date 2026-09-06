@@ -19,16 +19,16 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # A desktop pet is not worth a slow CI; fail fast on a real error instead.
+  # Incremental artefacts are pure overhead in CI and bloat the cache.
   CARGO_INCREMENTAL: 0
 
 jobs:
   # ---------------------------------------------------------------------------
   # The shared frontend/core. Platform-independent by design, so it runs once
-  # rather than once per architecture.
+  # rather than once per architecture — and on the cheapest arm64 runner.
   # ---------------------------------------------------------------------------
   frontend:
-    name: Frontend (typecheck, lint, tests)
+    name: Frontend (typecheck, lint, tests, build)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -48,17 +48,30 @@ jobs:
         run: npm run lint
 
       - name: Tests
-        run: npm test
+        run: npm test 2>&1 | tee frontend-tests.log
+
+      - name: Production frontend build
+        # The Tauri build runs this too, but failing here points at the
+        # frontend instead of burying a Vite error in a Rust build log.
+        run: npm run build
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macOS-test-logs
+          path: frontend-tests.log
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # The Rust/Tauri half, on both architectures.
+  # The Rust/Tauri half, on both architectures GitHub currently hosts.
   #
-  #   macos-14  -> Apple Silicon (arm64) runner
-  #   macos-13  -> Intel (x86_64) runner
+  #   macos-14        -> Apple Silicon (arm64)
+  #   macos-15-intel  -> Intel (x86_64); the macos-13 Intel image is retired
   #
-  # GitHub's macos-13 is the last Intel image; if it is retired, drop that
-  # matrix entry and cross-build x86_64 from the arm64 runner instead of
-  # silently losing Intel coverage.
+  # Neither result implies the other: the two differ in ABI, in library
+  # availability and in how Quartz reports geometry, which is exactly the class
+  # of bug this port is most exposed to.
   # ---------------------------------------------------------------------------
   build:
     name: ${{ matrix.name }}
@@ -74,9 +87,9 @@ jobs:
             target: aarch64-apple-darwin
             arch: arm64
           - name: Intel (x86_64)
-            runner: macos-13
+            runner: macos-15-intel
             target: x86_64-apple-darwin
-            arch: x64
+            arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -90,92 +103,108 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: clippy
 
-      - name: Cache cargo
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
+          # Deliberately NOT caching src-tauri/target: a stale target directory
+          # is the classic way a real compile error gets masked, and this is the
+          # only place the macOS code is ever compiled.
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ matrix.runner }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ matrix.runner }}-cargo-
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ matrix.runner }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ matrix.runner }}-cargo-registry-
 
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Fetch PDFium (universal dylib)
+      - name: Fetch PDFium
         # A declared bundle resource must exist BEFORE the Tauri build script
         # runs, so this is a build prerequisite rather than an optional extra.
         run: npm run fetch:pdfium
 
-      - name: Verify the PDFium library is a real Mach-O
+      - name: Verify PDFium is a real Mach-O with the slice this build needs
         run: |
           set -euo pipefail
           test -f src-tauri/lib/libpdfium.dylib
           file src-tauri/lib/libpdfium.dylib
-          # The app is shipped universal, so the library must carry both slices.
           lipo -info src-tauri/lib/libpdfium.dylib
+          # An Intel-only dylib inside an arm64 app loads on neither. Assert the
+          # slice this architecture actually needs is present.
+          lipo -info src-tauri/lib/libpdfium.dylib | grep -q '${{ matrix.arch }}' \
+            || { echo "PDFium is missing the ${{ matrix.arch }} slice"; exit 1; }
 
-      - name: Rust format check
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
-        continue-on-error: true
-
-      - name: Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} -- -D warnings
+      - name: Clippy (macOS cfg branches included)
+        # This is the first time anything compiles the macOS-only modules.
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --all-targets
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} 2>&1 | tee rust-tests-${{ matrix.arch }}.log
 
       - name: Build .app and .dmg
         # Unsigned/ad-hoc. Signing and notarisation need Apple credentials that
         # deliberately do not exist in this repository; see docs/MACOS_PORT.md.
         run: npm run tauri build -- --target ${{ matrix.target }}
 
-      - name: Describe the built binary
+      - name: Inspect the bundle
         run: |
           set -euo pipefail
           APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app"
           test -d "$APP"
-          echo "--- architecture ---"
+          echo "--- executable architecture ---"
           lipo -info "$APP/Contents/MacOS/MewMuze"
-          echo "--- bundle contents ---"
-          find "$APP" -maxdepth 3 -not -path '*/Frameworks/*' | head -40
-          echo "--- Info.plist keys that matter ---"
+          lipo -info "$APP/Contents/MacOS/MewMuze" | grep -q '${{ matrix.arch }}' \
+            || { echo "executable is not ${{ matrix.arch }}"; exit 1; }
+          echo "--- required Info.plist keys ---"
           /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
+          echo "--- bundled PDFium ---"
+          DYLIB=$(find "$APP" -name 'libpdfium.dylib' -print -quit)
+          test -n "$DYLIB" || { echo "libpdfium.dylib is missing from the bundle"; exit 1; }
+          file "$DYLIB"
+          lipo -info "$DYLIB"
+          echo "--- icon ---"
+          ls "$APP/Contents/Resources/"*.icns
           echo "--- signature (expected: adhoc or none) ---"
           codesign -dv --verbose=2 "$APP" 2>&1 || true
-          echo "--- app size ---"
+          echo "--- size ---"
           du -sh "$APP"
 
-      - name: Confirm the bundled PDFium travelled with the app
+      - name: Record artifact hashes
         run: |
           set -euo pipefail
-          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app"
-          # The Rust side looks for it beside the exe or in Resources; failing
-          # this check means PDF -> images silently degrades in the shipped app.
-          find "$APP" -name 'libpdfium.dylib' -print | grep -q . \
-            || { echo "libpdfium.dylib is missing from the bundle"; exit 1; }
+          B="src-tauri/target/${{ matrix.target }}/release/bundle"
+          shasum -a 256 "$B"/dmg/*.dmg | tee dmg-sha256-${{ matrix.arch }}.txt
 
       - name: Upload .app
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-${{ matrix.arch }}-app
+          name: MewMuze-Pro-macOS-${{ matrix.arch }}
           path: src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app
           if-no-files-found: error
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-${{ matrix.arch }}-dmg
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          name: MewMuze-Pro-macOS-DMG-${{ matrix.arch }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            dmg-sha256-${{ matrix.arch }}.txt
           if-no-files-found: error
 
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macOS-test-logs-${{ matrix.arch }}
+          path: rust-tests-${{ matrix.arch }}.log
+          if-no-files-found: warn
+
   # ---------------------------------------------------------------------------
-  # One app that runs natively on both architectures. This is what customers
-  # download, so it is built from the same source in the same run rather than
-  # stitched together afterwards from the two artifacts above.
+  # One app that runs natively on both architectures — what customers download.
   # ---------------------------------------------------------------------------
   universal:
     name: Universal (arm64 + x86_64)
@@ -194,21 +223,31 @@ jobs:
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
 
-      - name: Cache cargo
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: macos-14-universal-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: macos-14-universal-
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: macos-14-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-14-cargo-registry-
 
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Fetch PDFium (universal dylib)
+      - name: Fetch PDFium (universal)
         run: npm run fetch:pdfium
+
+      - name: PDFium must carry BOTH slices for a universal app
+        run: |
+          set -euo pipefail
+          INFO=$(lipo -info src-tauri/lib/libpdfium.dylib)
+          echo "$INFO"
+          # A universal MewMuze with a single-architecture PDFium is not a valid
+          # universal distribution: PDF tools would fail on half the machines.
+          echo "$INFO" | grep -q 'arm64'  || { echo "PDFium missing arm64";  exit 1; }
+          echo "$INFO" | grep -q 'x86_64' || { echo "PDFium missing x86_64"; exit 1; }
 
       - name: Build universal .app and .dmg
         run: npm run tauri build -- --target universal-apple-darwin
@@ -220,22 +259,30 @@ jobs:
           test -d "$APP"
           INFO=$(lipo -info "$APP/Contents/MacOS/MewMuze")
           echo "$INFO"
-          # A "universal" build missing a slice would install fine and then fail
-          # to launch for half the customers, so this is asserted, not eyeballed.
+          # "Universal" is asserted here, never assumed from the target name: a
+          # missing slice installs fine and then fails to launch for half the
+          # customers.
           echo "$INFO" | grep -q 'arm64'  || { echo "missing arm64 slice";  exit 1; }
           echo "$INFO" | grep -q 'x86_64' || { echo "missing x86_64 slice"; exit 1; }
+          DYLIB=$(find "$APP" -name 'libpdfium.dylib' -print -quit)
+          test -n "$DYLIB" || { echo "libpdfium.dylib missing from bundle"; exit 1; }
+          lipo -info "$DYLIB"
           du -sh "$APP"
+          shasum -a 256 "src-tauri/target/universal-apple-darwin/release/bundle/dmg/"*.dmg \
+            | tee dmg-sha256-universal.txt
 
       - name: Upload universal .app
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-universal-app
+          name: MewMuze-Pro-macOS-universal
           path: src-tauri/target/universal-apple-darwin/release/bundle/macos/MewMuze.app
           if-no-files-found: error
 
       - name: Upload universal .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-universal-dmg
-          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          name: MewMuze-Pro-macOS-DMG-universal
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            dmg-sha256-universal.txt
           if-no-files-found: error
