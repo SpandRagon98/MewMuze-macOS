@@ -99,11 +99,16 @@ pub fn get_foreground_app() -> Option<String> {
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use std::sync::OnceLock;
 
 /// Latest known playback state, refreshed by a background thread.
 static MEDIA_PLAYING: AtomicBool = AtomicBool::new(false);
 /// Ensures the refresher thread is started exactly once.
+///
+/// Windows-only: macOS answers `get_media_playing` straight from CoreAudio and
+/// needs no watcher thread, so on macOS this static has no user at all.
+#[cfg(windows)]
 static MEDIA_WATCHER: OnceLock<()> = OnceLock::new();
 
 /// The actual media-session query. BLOCKS: `RequestAsync().get()` waits for a
@@ -143,6 +148,7 @@ fn media_playing_blocking() -> bool {
 /// wait is safe) and the command is a non-blocking read of the cached value.
 /// A wedged media session can no longer take the app down with it.
 #[tauri::command]
+#[allow(unreachable_code)]
 pub fn get_media_playing() -> bool {
     #[cfg(target_os = "macos")]
     {
@@ -155,7 +161,6 @@ pub fn get_media_playing() -> bool {
         return crate::mic::coreaudio::output_running();
     }
     #[cfg(windows)]
-    #[allow(unreachable_code)]
     MEDIA_WATCHER.get_or_init(|| {
         std::thread::Builder::new()
             .name("media-session-poll".into())

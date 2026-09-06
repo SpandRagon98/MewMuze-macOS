@@ -147,7 +147,12 @@ jobs:
       - name: Build .app and .dmg
         # Unsigned/ad-hoc. Signing and notarisation need Apple credentials that
         # deliberately do not exist in this repository; see docs/MACOS_PORT.md.
-        run: npm run tauri build -- --target ${{ matrix.target }}
+        # --config disables updater artifacts for CI. The repo config keeps
+        # createUpdaterArtifacts on because a real release needs them, but
+        # producing one makes Tauri sign it, and with a pubkey present and no
+        # private key the build exits non-zero AFTER writing a perfectly good
+        # .app and .dmg. The signing key is deliberately not in this repo.
+        run: npm run tauri build -- --target ${{ matrix.target }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Inspect the bundle
         run: |
@@ -250,7 +255,12 @@ jobs:
           echo "$INFO" | grep -q 'x86_64' || { echo "PDFium missing x86_64"; exit 1; }
 
       - name: Build universal .app and .dmg
-        run: npm run tauri build -- --target universal-apple-darwin
+        # --config disables updater artifacts for CI. The repo config keeps
+        # createUpdaterArtifacts on because a real release needs them, but
+        # producing one makes Tauri sign it, and with a pubkey present and no
+        # private key the build exits non-zero AFTER writing a perfectly good
+        # .app and .dmg. The signing key is deliberately not in this repo.
+        run: npm run tauri build -- --target universal-apple-darwin --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify BOTH slices are present
         run: |

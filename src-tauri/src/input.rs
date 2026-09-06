@@ -43,14 +43,14 @@ pub fn get_keyboard_activity() -> u32 {
     0
 }
 
-/// The two Quartz event-source queries this file needs.
-///
-/// The `core-graphics` crate wraps `CGEventSource` for *creating* sources but
-/// binds neither counter query, so they are declared against the framework
-/// directly — the same approach `mic.rs` already takes for CoreAudio. Both are
-/// plain C functions taking and returning scalars, so unlike an ObjC
-/// `objc_msgSend` bridge there is no struct-return ABI difference between
-/// arm64 and x86_64 to get wrong.
+// The two Quartz event-source queries this file needs.
+//
+// The `core-graphics` crate wraps `CGEventSource` for *creating* sources but
+// binds neither counter query, so they are declared against the framework
+// directly — the same approach `mic.rs` already takes for CoreAudio. Both are
+// plain C functions taking and returning scalars, so unlike an ObjC
+// `objc_msgSend` bridge there is no struct-return ABI difference between
+// arm64 and x86_64 to get wrong.
 #[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {

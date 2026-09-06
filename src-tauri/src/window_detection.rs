@@ -12,6 +12,10 @@
 use serde::Serialize;
 
 /// Title of our own overlay window, so we can exclude it from enumeration.
+///
+/// Windows-only: the macOS enumerator skips our own windows by PID instead,
+/// because reading window TITLES there would require Screen Recording.
+#[cfg(windows)]
 pub const OVERLAY_TITLE: &str = "MewMuze";
 
 #[derive(Serialize)]
