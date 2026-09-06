@@ -1,0 +1,2292 @@
+/* Pixel-styled overlay UI: context menu, bubbles, note, settings, timer chip.
+   Everything is deliberately compact and dark so it stays unobtrusive. */
+
+/* Nunito, bundled rather than linked.
+
+   The overlay runs under a strict CSP with no network access, so a webfont
+   URL would simply fail and fall back — the typeface has to ship inside the
+   app. Both files are the variable version covering weights 400–800, so every
+   weight the UI asks for comes from one download instead of four static cuts.
+   Latin and latin-ext are separate faces with their own unicode-range: a UI
+   that never shows an accented character never pays for the second file. */
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("../assets/fonts/nunito-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("../assets/fonts/nunito-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Defined at the root, not on the panel classes, so ANY surface resolves it —
+   the token used to live only on `.sk-panel, .cat-menu, .quick-tools,
+   .clipboard-panel, .clipboard-badge`, and anything referencing it from
+   outside that list would have got an invalid value and fallen back to the
+   browser's default serif. The light theme overrides colours only, so one
+   definition covers both themes. */
+:root {
+  --sk-font: "Nunito", "Segoe UI Variable Display", "Segoe UI", system-ui,
+    -apple-system, sans-serif;
+}
+
+/* The document default, so anything that inherits rather than declaring a face
+   still lands on the app's typeface instead of the browser's default serif. */
+html,
+body {
+  font-family: var(--sk-font);
+}
+
+/* Form controls do NOT inherit font-family: every browser sets its own in the
+   user-agent stylesheet, so a <button> or <select> silently renders in the
+   system font no matter what its container says. Most controls here opted in
+   individually with `font-family: inherit`, but the settings sidebar tabs were
+   missed and rendered in the UA font — visibly different from the panel beside
+   them. Doing it once, here, means a new control cannot be forgotten.
+
+   Only the family is inherited, never the shorthand: `font: inherit` would
+   also wipe the font-size and weight these controls set for themselves. The
+   retro notice buttons already inherit, and inherit Courier from the notice,
+   so the pixel dialogue is unaffected. */
+button,
+input,
+select,
+textarea,
+optgroup {
+  font-family: inherit;
+}
+
+.pixel-ui {
+  /* Follows the shared token rather than hardcoding a face, so the panels and
+     the menu cannot drift apart. The retro notice, note, timer chip and break
+     picker each override this with Courier further down — that pixel-dialogue
+     look is deliberate and is left exactly as it was. */
+  font-family: var(--sk-font);
+  font-size: 12px;
+  color: #e8e8f0;
+  user-select: none;
+}
+
+/* Shares the settings dialog's tokens and typeface so the two read as one
+   product rather than a pixel menu bolted to a modern panel. */
+.cat-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 194px;
+  box-sizing: border-box;
+  padding: 6px;
+  font-family: var(--sk-font);
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  color: var(--sk-ink);
+  background: linear-gradient(180deg, #24282e, #1c1f24);
+  border: 1px solid var(--sk-edge);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 14px 36px rgba(0, 0, 0, 0.55);
+}
+.cat-menu-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease;
+}
+.cat-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.cat-menu-item.danger {
+  color: #e59a94;
+}
+.cat-menu-item.danger:hover {
+  background: rgba(180, 72, 63, 0.24);
+}
+.cat-menu-sep {
+  height: 1px;
+  background: var(--sk-line);
+  margin: 5px 8px;
+}
+.cat-menu-label {
+  padding: 7px 10px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sk-ink-faint);
+}
+.cat-menu-check {
+  color: var(--sk-accent);
+  font-weight: 600;
+}
+/* "Coming soon" items read as present-but-inert: dimmed, no hover, a small tag. */
+.cat-menu-item.soon {
+  color: var(--sk-ink-faint);
+  cursor: default;
+}
+.cat-menu-item.soon:hover {
+  background: transparent;
+}
+.cat-menu-soon {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sk-ink-faint);
+  border: 1px solid var(--sk-line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ---- universal retro notice ---------------------------------------------
+   The one notification style: small white rectangle, thin black outline,
+   black pixel-style text, one single line. Sits above the cat, never over it. */
+.retro-notice {
+  position: fixed;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #111111;
+  border-radius: 0;
+  box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.9);
+  padding: 4px 8px;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  animation: notice-pop 0.14s steps(3, end);
+  image-rendering: pixelated;
+}
+.retro-notice.warn {
+  background: #ddf5d2; /* light green: something is coming up */
+}
+.retro-notice.due {
+  background: #fbd9d2; /* light red: it is happening now */
+}
+@keyframes notice-pop {
+  from {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.retro-msg {
+  white-space: nowrap;
+}
+.retro-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+.retro-btn {
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #111111;
+  border-radius: 0;
+  box-shadow: 1px 1px 0 rgba(17, 17, 17, 0.9);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.85em;
+  padding: 1px 6px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.retro-btn:hover {
+  background: #e9e9e9;
+}
+.retro-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: none;
+}
+.retro-btn.done {
+  background: #ddf5d2;
+}
+/* ---- stacked email notifications ----------------------------------------
+   One positioned column of ordinary .retro-notice cards. column-reverse puts
+   the NEWEST email (first in the DOM) nearest the cat's head, so the stack
+   grows upward away from it and the pile reads newest-at-the-bottom. */
+.mail-stack {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 5px;
+  /* The cards inherit this, so one declaration sizes the whole stack — and the
+     placement effect can step it down in one place when a subject is too wide
+     for the monitor, the same 11px→8px ladder the single notice uses. */
+  font-size: 11px;
+}
+.mail-card {
+  /* The cards are laid out by the flex column, not placed individually. */
+  position: static;
+  /* Match the single notice's base size. Without this the cards inherit the
+     document's 16px and the stack reads noticeably larger than every other
+     retro notice; the placement effect may step it down to fit, exactly as
+     RetroNotice does. */
+  font-size: inherit;
+}
+.mail-more {
+  margin-left: 8px;
+  opacity: 0.62;
+  font-size: 0.85em;
+}
+.retro-btn.open {
+  background: #dfeaff; /* the action that leaves the app gets the accent */
+}
+/* ---- focus / break session timer ----------------------------------------
+   Same retro-dialogue shell as .retro-notice but colour-filled with white
+   text. The break variant carries a progress bar along its bottom edge. */
+.session-timer {
+  position: fixed;
+  z-index: 31;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+  border: 1px solid #111111;
+  border-radius: 0;
+  box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.9);
+  padding: 4px 8px 4px 9px;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  overflow: hidden;
+  image-rendering: pixelated;
+  transition: background 0.6s linear;
+}
+.session-timer.has-bar {
+  padding-bottom: 6px; /* room for the bar so it never overlaps the text */
+}
+.session-timer.overrun {
+  animation: session-flash 0.9s steps(2, end) infinite;
+}
+@keyframes session-flash {
+  50% {
+    box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.9), 0 0 0 3px rgba(192, 57, 43, 0.35);
+  }
+}
+.session-label {
+  font-size: 0.85em;
+  opacity: 0.92;
+}
+.session-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05em;
+}
+.session-end {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 0;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.82em;
+  line-height: 1.1;
+  padding: 0 5px;
+  cursor: pointer;
+}
+.session-end:hover {
+  background: rgba(255, 255, 255, 0.34);
+}
+.session-end:active {
+  transform: translate(1px, 1px);
+}
+.session-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.9);
+  transition: width 0.5s linear;
+}
+
+/* ---- break duration picker ---- */
+.break-picker {
+  position: fixed;
+  z-index: 31;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #111111;
+  border-radius: 0;
+  box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.9);
+  padding: 4px 6px;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-weight: 700;
+  font-size: 11px;
+}
+.break-picker-label {
+  padding: 0 3px;
+}
+.break-pill {
+  background: #ddf5d2;
+  color: #111111;
+  border: 1px solid #111111;
+  border-radius: 0;
+  box-shadow: 1px 1px 0 rgba(17, 17, 17, 0.9);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.break-pill:hover {
+  background: #c8eeb6;
+}
+.break-pill:active {
+  transform: translate(1px, 1px);
+  box-shadow: none;
+}
+.break-pill.cancel {
+  background: #fbd9d2;
+}
+
+.pixel-btn {
+  background: #2b2b3a;
+  border: 1px solid #4a4a5c;
+  color: #e8e8f0;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.pixel-btn:hover {
+  background: #3a3a4e;
+}
+.pixel-btn.primary {
+  background: #2c5c2f;
+  border-color: #3f8f43;
+}
+.pixel-btn.primary:hover {
+  background: #367038;
+}
+
+/* Pinned note + pomodoro chip share the retro label look so every floating
+   element around the cat belongs to one visual family. */
+.cat-note {
+  position: fixed;
+  z-index: 25;
+  max-width: 260px;
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #111111;
+  border-radius: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: "Courier New", ui-monospace, monospace;
+  font-weight: 700;
+  box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.9);
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Overflow lives on an inner span so the tail triangles below never get
+   clipped by the box. */
+.cat-note-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Chat-balloon tail: a small triangle on the bottom-left, black outline first,
+   white fill layered on top so it joins the box seamlessly. */
+.cat-note::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  bottom: -8px;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 8px solid #111111;
+}
+.cat-note::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  bottom: -6px;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 7px solid #ffffff;
+}
+
+.pomo-chip {
+  position: fixed;
+  z-index: 25;
+  background: #ffffff;
+  color: #111111;
+  border: 1px solid #111111;
+  border-radius: 0;
+  box-shadow: 2px 2px 0 rgba(17, 17, 17, 0.9);
+  font-family: "Courier New", ui-monospace, monospace;
+  font-weight: 700;
+  font-size: 11px;
+  padding: 3px 9px;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+.pomo-chip .phase-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+/* ---- Licence gate: compact blocking activation dialog ---- */
+.sk-panel.license-gate {
+  width: 380px;
+  min-height: 0;
+  height: auto;
+}
+.gate-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gate-lede {
+  margin: 0;
+  color: var(--sk-ink-dim);
+  line-height: 1.5;
+}
+.gate-important {
+  padding: 11px 12px;
+  color: var(--sk-ink);
+  background: linear-gradient(180deg, rgba(224, 138, 130, 0.18), rgba(180, 72, 63, 0.1));
+  border: 1px solid rgba(224, 138, 130, 0.62);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 2px 7px rgba(0, 0, 0, 0.18);
+  line-height: 1.45;
+}
+.gate-important strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #f1aaa3;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.gate-important p {
+  margin: 0;
+}
+.gate-important small {
+  display: block;
+  margin-top: 5px;
+  color: var(--sk-ink-dim);
+  font-size: 11.5px;
+}
+.gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+.gate-error {
+  margin: 0;
+  color: #ffb4b4;
+}
+.gate-foot {
+  margin: 2px 0 0;
+  color: var(--sk-ink-dim);
+  font-size: 12px;
+}
+.gate-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.gate-link {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  color: var(--sk-brass);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.gate-link:hover,
+.gate-link:focus-visible {
+  color: var(--sk-ink);
+}
+
+/* ---- Set Reminder / Add Note: compact skeuomorphic dialogs ---- */
+.sk-panel.reminder-panel {
+  width: 360px;
+  min-height: 0;
+  height: auto;
+}
+.reminder-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Soft recessed well: the form sits IN the panel, controls rest on it. */
+  margin: 10px 12px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.14);
+  border: 1px solid var(--sk-line);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.22), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+}
+/* Clean two-column form: fixed label rail, stretching control. This replaces
+   the settings panel's space-between flex, which crammed a short label right
+   up against a full-width input. */
+.sk-panel.reminder-panel .sk-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+.sk-panel.reminder-panel .sk-label {
+  display: block;
+  font-weight: 500;
+  color: var(--sk-ink-dim);
+}
+.sk-panel.reminder-panel .sk-input {
+  width: 100%;
+  max-width: none;
+  justify-self: stretch;
+}
+.reminder-error {
+  color: #e08a82;
+  font-size: 12px;
+  padding-top: 8px;
+}
+.reminder-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.scroll-paper {
+  position: fixed;
+  z-index: 24;
+  width: 26px;
+  background: #efeadb;
+  border: 2px solid #b9b29a;
+  border-radius: 3px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+}
+.scroll-paper .line {
+  height: 2px;
+  background: #c8c1a8;
+  margin: 4px 4px 0;
+}
+
+/* ---- Work mode --------------------------------------------------------- */
+/* The lightning strike that starts work mode. Entirely decorative: it must
+   never eat a click, so the whole thing is pointer-transparent. */
+.thunder-strike {
+  position: fixed;
+  z-index: 46;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+/* Faint glow only — a soft halo, not a floodlight. */
+.ts-glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 240, 180, 0.35) 0%, rgba(255, 216, 77, 0.12) 45%, rgba(255, 216, 77, 0) 70%);
+  animation: ts-flash 640ms ease-out forwards;
+}
+/* Crisp pixel-art bolt, centred on the cat. */
+.ts-bolt-px {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  image-rendering: pixelated;
+  animation: ts-strike 640ms steps(1, end) forwards;
+}
+@keyframes ts-flash {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  16% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.1); }
+}
+/* Flicker rather than a smooth fade — real lightning stutters, and stepped
+   opacity reads far more like a strike than a linear ramp. */
+@keyframes ts-strike {
+  0%, 100% { opacity: 0; }
+  6% { opacity: 1; }
+  14% { opacity: 0.15; }
+  20% { opacity: 1; }
+  34% { opacity: 0.5; }
+  44% { opacity: 0.9; }
+  62% { opacity: 0; }
+}
+/* Respect users who have asked the OS for less motion: keep the flash, drop
+   the strobing. */
+@media (prefers-reduced-motion: reduce) {
+  .ts-bolt-px { animation: ts-flash 360ms ease-out forwards; }
+  .ts-glow { animation-duration: 360ms; }
+}
+
+/* ---- Work-mode Quick Tools panel — skeuomorphic ------------------------ */
+.quick-tools {
+  position: fixed;
+  z-index: 45;
+  /* Placement maths uses PANEL_SIZE, so the border + padding must live inside
+     that width, or the panel overhangs the work area / the cat. */
+  box-sizing: border-box;
+  padding: 12px 14px 14px;
+  font-family: var(--sk-font);
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  color: var(--sk-ink);
+  /* Skeuomorphic depth from light alone: a top sheen falling off quickly, a
+     faint side vignette, a hairline inner highlight above a real cast shadow. */
+  background:
+    radial-gradient(120% 46px at 50% 0%, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(180deg, #2b2f36, #1f2329 58%, #1b1e23);
+  border: 1px solid var(--sk-edge);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 1px 0 0 rgba(255, 255, 255, 0.03),
+    inset -1px 0 0 rgba(0, 0, 0, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.42),
+    0 18px 44px rgba(0, 0, 0, 0.58);
+}
+.qt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--sk-line);
+}
+.qt-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--sk-ink);
+}
+.qt-x {
+  background: transparent;
+  border: none;
+  color: var(--sk-ink-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.qt-x:hover {
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+/* Category menu: two tactile cards, same light-from-above language as the
+   panel itself. Buttons, so tab/Enter work without extra key handling. */
+.qt-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+.qt-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 11px 12px;
+  text-align: left;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--sk-ink);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.24);
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.06s ease;
+}
+.qt-card:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.qt-card:active {
+  /* Pressed: sink into the panel rather than lift off it. */
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.qt-card:focus-visible {
+  outline: 2px solid var(--sk-green);
+  outline-offset: 2px;
+}
+.qt-card-icon {
+  font-size: 17px;
+  line-height: 1;
+  flex: none;
+}
+.qt-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.qt-card-text strong {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.qt-card-text small {
+  color: var(--sk-ink-faint);
+  font-size: 10.5px;
+}
+.qt-card-go {
+  color: var(--sk-ink-faint);
+  flex: none;
+}
+
+/* Back control replaces the title while a tool is open. */
+.qt-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: none;
+  padding: 2px 7px 2px 4px;
+  margin-left: -4px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--sk-ink);
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+.qt-back:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.qt-back:focus-visible {
+  outline: 2px solid var(--sk-green);
+  outline-offset: 2px;
+}
+
+/* Pre-save preview: a compact scrollable well. */
+.qt-preview {
+  margin: 6px 0 2px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+  overflow-x: auto;
+}
+.qt-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 10.5px;
+}
+.qt-preview th,
+.qt-preview td {
+  padding: 3px 6px;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qt-preview th {
+  font-weight: 600;
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.qt-preview td {
+  color: var(--sk-ink-dim);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Worksheet checklist for Split. */
+.qt-sheets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 116px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  margin: 2px 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+.qt-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 11.5px;
+  color: var(--sk-ink-dim);
+  cursor: pointer;
+  min-width: 0;
+}
+.qt-check span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qt-check input {
+  flex: none;
+  accent-color: var(--sk-green);
+  cursor: pointer;
+}
+.qt-list-row.dragging {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+}
+.qt-cancel {
+  margin-bottom: 6px;
+}
+
+.qt-section {
+  margin: 12px 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sk-ink-faint);
+  border-bottom: 1px solid var(--sk-line);
+  padding-bottom: 5px;
+}
+.qt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+.qt-row select {
+  background: rgba(0, 0, 0, 0.26);
+  color: var(--sk-ink);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  padding: 5px 7px;
+  font-size: 11.5px;
+  font-family: inherit;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+/* The panel's buttons reuse the settings button look. */
+.quick-tools .pixel-btn {
+  padding: 6px 13px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--sk-ink);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.quick-tools .pixel-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.17);
+}
+.quick-tools .pixel-btn.primary {
+  background: var(--sk-green);
+  border-color: rgba(0, 0, 0, 0.25);
+  color: #0f1a10;
+  font-weight: 600;
+}
+.quick-tools .pixel-btn.primary:hover {
+  background: #6dbd70;
+}
+.pixel-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.qt-file {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--sk-ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qt-hint {
+  font-size: 10.5px;
+  color: var(--sk-ink-faint);
+  line-height: 1.35;
+}
+.qt-unavailable {
+  font-size: 11.5px;
+  color: var(--sk-accent);
+  line-height: 1.4;
+  padding: 4px 0;
+}
+/* Merge queue. Capped and scrollable so a 40-file batch cannot stretch the
+   panel past the bottom of the screen after it has been placed. */
+.qt-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 4px;
+  max-height: 92px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+.qt-list-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+.qt-list-row + .qt-list-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+/* Shows the resulting page order, which is the point of reordering. */
+.qt-list-num {
+  flex: none;
+  font-size: 10px;
+  color: var(--sk-ink-faint);
+  min-width: 14px;
+  text-align: right;
+}
+.qt-list-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--sk-ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qt-mini {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  color: var(--sk-ink);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.qt-mini:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.qt-mini:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+/* Matches .qt-row select so the page box sits level with the mode dropdown. */
+.qt-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.26);
+  color: var(--sk-ink);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  padding: 5px 7px;
+  font-size: 11.5px;
+  font-family: inherit;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.qt-input::placeholder {
+  color: var(--sk-ink-faint);
+}
+/* Always present, so a result appearing cannot change the panel's height and
+   shove it off the bottom of the screen after it has been placed. */
+.qt-status-slot {
+  margin-top: 10px;
+  min-height: 34px;
+}
+.qt-status {
+  font-size: 11.5px;
+  line-height: 1.4;
+  border-radius: 7px;
+  padding: 6px 9px;
+  word-break: break-word;
+  border: 1px solid transparent;
+}
+.qt-status.ok {
+  background: rgba(95, 174, 98, 0.14);
+  border-color: rgba(95, 174, 98, 0.4);
+  color: #bfe6bf;
+}
+.qt-status.err {
+  background: rgba(180, 72, 63, 0.16);
+  border-color: rgba(180, 72, 63, 0.45);
+  color: #f0a9a3;
+}
+
+
+/* ==== Settings panel — skeuomorphic ===================================== */
+/* Brushed-metal frame, inset felt body, physical switches. Built from
+   gradients + inset/outset shadows so it reads as a real object, not a card. */
+
+/* Border-box throughout: the panel's own 1px border pushed a maximized window
+   to 722px inside a 720px viewport, and inset controls have the same issue. */
+.sk-backdrop,
+.sk-backdrop * {
+  box-sizing: border-box;
+}
+
+.sk-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(8, 8, 12, 0.55), rgba(4, 4, 7, 0.82));
+  backdrop-filter: blur(2px);
+  padding: 24px;
+}
+.sk-backdrop.max { padding: 0; }
+
+/* Shared theme tokens: the context menu and the work-mode Quick Tools panel use
+   these too, so every surface reads as one material rather than separate designs. */
+.sk-panel,
+.cat-menu,
+.quick-tools,
+.clipboard-panel,
+.clipboard-badge {
+  --sk-ink: #eceef4;
+  --sk-ink-dim: #9aa0b0;
+  --sk-ink-faint: #737a8b;
+  --sk-line: rgba(255, 255, 255, 0.06);
+  --sk-accent: #c8a961;
+  --sk-green: #5fae62;
+  --sk-surface: #1e2126;
+  --sk-surface-hi: #262a30;
+  --sk-edge: #0e1013;
+  /* One restrained typographic scale, used everywhere. */
+}
+
+.sk-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, 100%);
+  height: min(720px, 100%);
+  color: var(--sk-ink);
+  font-family: var(--sk-font);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  border-radius: 12px;
+  /* Minimal skeuomorphism: one soft top light, a hairline edge and a real cast
+     shadow. No heavy metal gradients — depth comes from light, not texture. */
+  background: linear-gradient(180deg, #2a2e34 0%, #202429 120px, #1c1f24 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 24px 70px rgba(0, 0, 0, 0.62);
+  border: 1px solid var(--sk-edge);
+  overflow: hidden;
+}
+.sk-panel.max {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+/* ---- title bar ---- */
+.sk-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: transparent;
+  border-bottom: 1px solid var(--sk-line);
+  flex: none;
+}
+.sk-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 13.5px;
+  letter-spacing: 0.01em;
+}
+.sk-title-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.sk-window-btns {
+  display: flex;
+  gap: 7px;
+}
+.sk-winbtn {
+  width: 26px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--sk-ink-dim);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sk-winbtn:hover {
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.07);
+}
+.sk-winbtn:active {
+  background: rgba(0, 0, 0, 0.28);
+}
+.sk-winbtn.close:hover {
+  background: #b4483f;
+  color: #fff;
+}
+
+/* ---- body layout ---- */
+.sk-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 178px minmax(0, 1fr) 268px;
+}
+.sk-panel.max .sk-body {
+  grid-template-columns: 208px minmax(0, 1fr) 340px;
+}
+
+/* ---- tab rail ---- */
+.sk-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 10px;
+  background: rgba(0, 0, 0, 0.16);
+  border-right: 1px solid var(--sk-line);
+}
+.sk-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--sk-ink-dim);
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  border: none;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sk-tab:hover {
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.05);
+}
+.sk-tab.on {
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+/* A single hairline accent marks the active tab — the only ornament here. */
+.sk-tab.on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--sk-accent);
+}
+.sk-tab-icon {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+/* ---- main column ---- */
+/* min-height:0 is load-bearing. Grid items default to min-height:auto, so this
+   column refused to shrink below its content and grew straight past the panel
+   (measured 1043px inside a 568px track) — the scroll area then sized to the
+   grown height, never scrolled, and the lower settings were unreachable. */
+.sk-main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+.sk-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 18px 18px;
+}
+.sk-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.sk-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sk-scroll::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  background-color: rgba(255, 255, 255, 0.14);
+}
+.sk-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.24);
+}
+
+.sk-group {
+  padding-top: 4px;
+}
+.sk-group-title {
+  margin: 20px 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sk-ink-faint);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--sk-line);
+}
+
+.sk-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--sk-line);
+}
+.sk-row:last-child {
+  border-bottom: none;
+}
+.sk-row.stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+.sk-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+.sk-hint {
+  font-size: 10.5px;
+  color: #7d8496;
+}
+
+/* ---- inputs: inset, recessed ---- */
+.sk-input {
+  background: rgba(0, 0, 0, 0.26);
+  color: var(--sk-ink);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  max-width: 210px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.sk-input:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.sk-input:focus {
+  outline: none;
+  border-color: var(--sk-accent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(200, 169, 97, 0.16);
+}
+.sk-input.narrow {
+  max-width: 76px;
+  text-align: center;
+}
+.sk-input.wide {
+  max-width: none;
+  width: 100%;
+}
+.sk-input.mono {
+  font-family: ui-monospace, "Courier New", monospace;
+}
+select.sk-input {
+  cursor: pointer;
+}
+
+.sk-colour {
+  width: 46px;
+  height: 27px;
+  padding: 3px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(0, 0, 0, 0.26);
+  cursor: pointer;
+}
+.sk-colour:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.sk-colour:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.sk-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sk-sep {
+  color: #798091;
+}
+
+.sk-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 116px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.4);
+}
+.sk-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  cursor: grab;
+  background: #e8eaf0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: transform 0.12s ease;
+}
+.sk-range::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+
+/* ---- physical rocker switch ---- */
+.sk-switch {
+  position: relative;
+  flex: none;
+  width: 42px;
+  height: 24px;
+  border-radius: 12px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+.sk-switch.on {
+  background: var(--sk-green);
+  border-color: rgba(0, 0, 0, 0.28);
+}
+.sk-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f4f5f8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  transition: transform 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.sk-switch.on .sk-switch-knob {
+  transform: translateX(18px);
+}
+
+/* ---- buttons ---- */
+.sk-btn {
+  flex: none;
+  padding: 7px 15px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--sk-ink);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.sk-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.17);
+}
+.sk-btn:active {
+  background: rgba(0, 0, 0, 0.2);
+}
+.sk-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.sk-btn.primary {
+  background: var(--sk-green);
+  border-color: rgba(0, 0, 0, 0.25);
+  color: #0f1a10;
+  font-weight: 600;
+}
+.sk-btn.primary:hover {
+  background: #6dbd70;
+}
+.sk-btn.danger {
+  background: rgba(180, 72, 63, 0.16);
+  border-color: rgba(180, 72, 63, 0.5);
+  color: #f0a9a3;
+}
+.sk-btn.danger:hover {
+  background: rgba(180, 72, 63, 0.3);
+}
+
+/* ---- connectors (Gmail / Calendar) ---- */
+.sk-connect-blurb {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--sk-ink-dim);
+  margin: 2px 0 10px;
+}
+.sk-conn-on {
+  color: var(--sk-green);
+  font-weight: 600;
+}
+.sk-conn-off {
+  color: var(--sk-ink-faint);
+}
+.sk-steps-toggle {
+  background: transparent;
+  border: none;
+  color: var(--sk-accent);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 0 4px;
+  text-align: left;
+}
+.sk-steps-toggle:hover {
+  text-decoration: underline;
+}
+.sk-steps {
+  margin: 4px 0 10px;
+  padding-left: 20px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--sk-ink-dim);
+}
+.sk-steps li {
+  margin-bottom: 3px;
+}
+.sk-steps b {
+  color: var(--sk-ink);
+  font-weight: 600;
+}
+.sk-connection-guide {
+  margin: 6px 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--sk-line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  color: var(--sk-ink-dim);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+.sk-connection-guide h4 {
+  margin: 12px 0 5px;
+  color: var(--sk-ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+.sk-connection-guide h4:first-child,
+.sk-connection-guide p:first-child + h4 {
+  margin-top: 0;
+}
+.sk-connection-guide p {
+  margin: 4px 0 8px;
+}
+.sk-connection-guide .guide-link {
+  margin: 2px 0 7px;
+  color: var(--sk-ink);
+  border-color: var(--sk-accent);
+}
+.sk-guide-note {
+  color: var(--sk-ink-faint);
+  font-style: italic;
+}
+.sk-guide-timing,
+.sk-guide-warning {
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: rgba(104, 183, 109, 0.1);
+  border-left: 2px solid var(--sk-green);
+  color: var(--sk-ink);
+}
+.sk-guide-warning {
+  background: rgba(224, 138, 130, 0.1);
+  border-left-color: #e08a82;
+}
+
+/* ---- licence plate ---- */
+.sk-license {
+  margin: 16px 18px 2px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--sk-line);
+  border-left: 2px solid rgba(255, 255, 255, 0.2);
+}
+.sk-license.licensed {
+  border-left-color: var(--sk-green);
+}
+.sk-license.trial {
+  border-left-color: var(--sk-brass);
+}
+.sk-license.free {
+  border-left-color: #b4574f;
+}
+.sk-license-status {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.sk-license-hint {
+  font-size: 11.5px;
+  color: var(--sk-ink-dim);
+  line-height: 1.45;
+  margin-bottom: 9px;
+}
+.sk-license-entry {
+  display: flex;
+  gap: 8px;
+}
+.sk-license-entry .sk-input {
+  flex: 1;
+  max-width: none;
+}
+.sk-license-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sk-license-actions .sk-license-hint {
+  flex: 1;
+  margin-bottom: 0;
+}
+.sk-license-actions .sk-btn {
+  flex: 0 0 auto;
+}
+.sk-license-error {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #ff9b9b;
+}
+
+/* Inline "needs a licence" badge, sits inside a control's label. */
+.locked-tag {
+  align-self: flex-start;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #f0cf86;
+  border: 1px solid #6b5426;
+  background: linear-gradient(#4a3c1c, #2b2416);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+
+/* ---- Photo Mode ---------------------------------------------------------
+   Reuses the .quick-tools shell; only the viewfinder, the chip rows and the
+   consent block below are new. */
+.quick-tools.photo-mode {
+  padding-bottom: 10px;
+}
+
+/* The viewfinder. Inset and slightly darker than the panel so the cat reads as
+   sitting inside a little screen, matching the settings preview. */
+.pm-stage {
+  margin: 8px 0 2px;
+  padding: 8px;
+  display: flex;
+  justify-content: center;
+  border: 1px solid var(--sk-line);
+  border-radius: 8px;
+  background:
+    linear-gradient(var(--sk-edge), var(--sk-surface)),
+    repeating-conic-gradient(rgba(255, 255, 255, 0.04) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.pm-preview {
+  /* The checkerboard behind it is the transparency, so what the viewfinder
+     shows is honestly what a Cat Only export contains. */
+  width: 132px;
+  height: 132px;
+  image-rendering: pixelated;
+}
+
+.pm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 0 4px;
+}
+
+.pm-modes {
+  display: flex;
+  gap: 4px;
+  padding: 2px 0 4px;
+}
+.pm-mode {
+  flex: 1;
+  padding: 6px 4px;
+  border: 1px solid var(--sk-line);
+  border-radius: 6px;
+  background: linear-gradient(var(--sk-surface-hi), var(--sk-surface));
+  color: var(--sk-ink-dim);
+  font-family: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.pm-mode:hover {
+  color: var(--sk-ink);
+}
+.pm-mode.on {
+  color: var(--sk-ink);
+  border-color: var(--sk-accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 0 0 1px rgba(200, 169, 97, 0.22);
+}
+.pm-detail {
+  color: var(--sk-ink-faint);
+  font-size: 10.5px;
+  line-height: 1.35;
+  padding-bottom: 4px;
+}
+
+/* The screen-capture warning. Deliberately the loudest thing in the panel:
+   it is the only control here that can put anything but the cat in a file. */
+.pm-consent {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin: 2px 0 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--sk-accent);
+  border-radius: 6px;
+  background: rgba(200, 169, 97, 0.08);
+  color: var(--sk-ink);
+  font-size: 10.5px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.pm-consent input {
+  margin: 1px 0 0;
+  flex: none;
+}
+
+.pm-actions {
+  gap: 6px;
+}
+.pm-actions .pixel-btn {
+  flex: 1;
+}
+
+.pm-status {
+  color: var(--sk-green);
+  font-size: 10.5px;
+  padding-top: 4px;
+}
+.pm-error {
+  color: #e07a5f;
+  font-size: 10.5px;
+  padding-top: 4px;
+}
+.pm-share {
+  color: var(--sk-ink-faint);
+  font-size: 10px;
+  padding-top: 6px;
+  text-align: center;
+}
+
+.sk-light .pm-mode {
+  background: linear-gradient(#fffdfa, #f6eee2);
+}
+.sk-light .pm-stage {
+  background:
+    linear-gradient(#f3e7d6, var(--sk-surface)),
+    repeating-conic-gradient(rgba(120, 80, 30, 0.07) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+}
+
+/* ---- preview pane ---- */
+.sk-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 14px;
+  background: rgba(0, 0, 0, 0.16);
+  border-left: 1px solid var(--sk-line);
+}
+.sk-aside-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sk-ink-faint);
+}
+.sk-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+}
+/* Recessed "screen" the cat sits inside. */
+.sk-preview-screen {
+  position: relative;
+  padding: 12px;
+  border-radius: 12px;
+  background: radial-gradient(ellipse at 50% 25%, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.28) 72%);
+  border: 1px solid var(--sk-line);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.sk-preview-screen canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+/* Glass sheen across the top of the screen. */
+.sk-preview-glass {
+  position: absolute;
+  inset: 1px 1px 45% 1px;
+  border-radius: 11px 11px 40% 40%;
+  background: linear-gradient(rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+.sk-preview-poses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+  max-width: 240px;
+}
+.sk-chip {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sk-ink-dim);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid transparent;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sk-chip:hover {
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.11);
+}
+.sk-chip.on {
+  color: #17130a;
+  background: var(--sk-accent);
+  font-weight: 600;
+}
+.sk-aside-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #7d8496;
+  text-align: center;
+}
+
+/* ---- footer ---- */
+.sk-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.14);
+  border-top: 1px solid var(--sk-line);
+}
+.sk-footer-brand {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--sk-ink-faint);
+}
+
+/* Narrow windows: drop the preview rail, then the tab rail. */
+@media (max-width: 900px) {
+  .sk-body,
+  .sk-panel.max .sk-body {
+    grid-template-columns: 160px minmax(0, 1fr);
+  }
+  .sk-aside {
+    display: none;
+  }
+}
+@media (max-width: 620px) {
+  .sk-body,
+  .sk-panel.max .sk-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sk-tabs {
+    display: none;
+  }
+}
+
+/* ==== Light theme ======================================================= */
+/* Toggled by a single `sk-light` class on <html> (Settings → Appearance →
+   Theme). White surfaces washed with VERY light warm orange, orange accents
+   and buttons; the same restrained skeuomorphism — depth from light, not
+   texture — just lit from a bright room instead of a dim one. */
+
+.sk-light .sk-panel,
+.sk-light .cat-menu,
+.sk-light .quick-tools,
+.sk-light .clipboard-panel,
+.sk-light .clipboard-badge {
+  --sk-ink: #3a2e20;
+  --sk-ink-dim: #7a6a54;
+  --sk-ink-faint: #a4917a;
+  --sk-line: rgba(120, 80, 30, 0.12);
+  --sk-accent: #e8862e;
+  --sk-green: #5fae62;
+  --sk-surface: #fffaf4;
+  --sk-surface-hi: #fff3e6;
+  --sk-edge: #e6d5c0;
+}
+
+.sk-light .sk-backdrop {
+  background: radial-gradient(ellipse at center, rgba(70, 50, 25, 0.28), rgba(50, 35, 18, 0.5));
+}
+
+.sk-light .sk-panel {
+  background: linear-gradient(180deg, #ffffff 0%, #fff8f0 120px, #fdf2e4 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(90, 60, 25, 0.18),
+    0 24px 70px rgba(90, 60, 25, 0.35);
+}
+
+.sk-light .cat-menu {
+  background: linear-gradient(180deg, #ffffff, #fff5ea);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(90, 60, 25, 0.16),
+    0 14px 36px rgba(90, 60, 25, 0.3);
+}
+.sk-light .cat-menu-item:hover {
+  background: rgba(232, 134, 46, 0.1);
+}
+.sk-light .cat-menu-item.danger {
+  color: #bc4a3e;
+}
+.sk-light .cat-menu-item.danger:hover {
+  background: rgba(188, 74, 62, 0.12);
+}
+
+.sk-light .quick-tools {
+  background:
+    radial-gradient(120% 46px at 50% 0%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(180deg, #ffffff, #fff6ec 58%, #fdf0e0);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(150, 100, 45, 0.08),
+    0 1px 2px rgba(90, 60, 25, 0.16),
+    0 18px 44px rgba(90, 60, 25, 0.3);
+}
+
+/* Rails + wells: light-orange wash instead of black glass. */
+.sk-light .sk-tabs,
+.sk-light .sk-aside {
+  background: rgba(232, 134, 46, 0.055);
+}
+.sk-light .sk-tab:hover {
+  background: rgba(232, 134, 46, 0.1);
+}
+.sk-light .sk-tab.on {
+  background: rgba(232, 134, 46, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+.sk-light .sk-title-badge {
+  background: rgba(232, 134, 46, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.sk-light .sk-winbtn:hover {
+  background: rgba(232, 134, 46, 0.14);
+}
+.sk-light .sk-winbtn:active {
+  background: rgba(150, 100, 45, 0.18);
+}
+.sk-light .reminder-body {
+  background: rgba(232, 134, 46, 0.06);
+  border-color: rgba(150, 100, 45, 0.14);
+  box-shadow: inset 0 1px 3px rgba(120, 80, 30, 0.1), inset 0 -1px 0 rgba(255, 255, 255, 0.7);
+}
+.sk-light .reminder-error {
+  color: #bc4a3e;
+}
+
+/* Inputs: white wells on the warm surface. */
+.sk-light .sk-input,
+.sk-light .sk-colour {
+  background: #ffffff;
+  border-color: rgba(150, 100, 45, 0.22);
+  color: var(--sk-ink);
+  box-shadow: inset 0 1px 2px rgba(120, 80, 30, 0.1);
+}
+.sk-light .sk-input:hover,
+.sk-light .sk-colour:hover {
+  border-color: rgba(150, 100, 45, 0.36);
+}
+.sk-light .sk-input:focus {
+  border-color: var(--sk-accent);
+  box-shadow: inset 0 1px 2px rgba(120, 80, 30, 0.1), 0 0 0 3px rgba(232, 134, 46, 0.18);
+}
+.sk-light .sk-hint {
+  color: #a4917a;
+}
+.sk-light .sk-sep {
+  color: #b9a68d;
+}
+.sk-light .sk-range {
+  background: rgba(150, 100, 45, 0.16);
+  box-shadow: inset 0 1px 1px rgba(120, 80, 30, 0.14);
+}
+.sk-light .sk-range::-webkit-slider-thumb {
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(120, 80, 30, 0.35), 0 0 0 1px rgba(150, 100, 45, 0.25);
+}
+
+/* Switches: warm ivory off, orange on. */
+.sk-light .sk-switch {
+  background: rgba(150, 100, 45, 0.14);
+  border-color: rgba(150, 100, 45, 0.2);
+  box-shadow: inset 0 1px 2px rgba(120, 80, 30, 0.14);
+}
+.sk-light .sk-switch.on {
+  background: var(--sk-accent);
+  border-color: rgba(150, 80, 20, 0.35);
+}
+
+/* Buttons: soft warm chips; primary is a real orange with white text. */
+.sk-light .sk-btn {
+  background: #fff4e8;
+  border-color: rgba(150, 100, 45, 0.24);
+  color: var(--sk-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 1px 1px rgba(120, 80, 30, 0.08);
+}
+.sk-light .sk-btn:hover {
+  background: #ffe9d2;
+  border-color: rgba(150, 100, 45, 0.36);
+}
+.sk-light .sk-btn:active {
+  background: #faddbe;
+}
+.sk-light .sk-btn.primary {
+  background: linear-gradient(180deg, #f49a44, #e8862e);
+  border-color: #c96d1d;
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 2px rgba(120, 80, 30, 0.2);
+}
+.sk-light .sk-btn.primary:hover {
+  background: linear-gradient(180deg, #f8a552, #ef913a);
+}
+.sk-light .sk-btn.danger {
+  background: rgba(188, 74, 62, 0.1);
+  border-color: rgba(188, 74, 62, 0.4);
+  color: #a8392e;
+}
+.sk-light .sk-btn.danger:hover {
+  background: rgba(188, 74, 62, 0.18);
+}
+
+/* Scrollbars + license plate + preview screen. */
+.sk-light .sk-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(150, 100, 45, 0.28);
+}
+.sk-light .sk-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(150, 100, 45, 0.44);
+}
+.sk-light .sk-license {
+  background: rgba(232, 134, 46, 0.06);
+  border-left-color: rgba(150, 100, 45, 0.35);
+}
+.sk-light .sk-license-error {
+  color: #bc4a3e;
+}
+.sk-light .locked-tag {
+  color: #9a6a14;
+  border-color: #dcb877;
+  background: linear-gradient(#fdeccb, #f7ddab);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.sk-light .sk-preview-screen {
+  background: radial-gradient(ellipse at 50% 25%, rgba(255, 255, 255, 0.8), rgba(232, 134, 46, 0.12) 72%);
+  box-shadow: inset 0 1px 3px rgba(120, 80, 30, 0.16);
+}
+
+/* Work-mode category menu + spreadsheet tools, on a light card. */
+.sk-light .qt-card {
+  background: rgba(232, 134, 46, 0.06);
+  border-color: rgba(150, 100, 45, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.sk-light .qt-card:hover {
+  background: rgba(232, 134, 46, 0.12);
+  border-color: rgba(150, 100, 45, 0.3);
+}
+.sk-light .qt-card:active {
+  background: rgba(232, 134, 46, 0.16);
+}
+.sk-light .qt-back:hover {
+  background: rgba(232, 134, 46, 0.12);
+}
+.sk-light .qt-preview {
+  background: rgba(232, 134, 46, 0.055);
+  border-color: rgba(150, 100, 45, 0.18);
+}
+.sk-light .qt-preview th {
+  background: rgba(232, 134, 46, 0.1);
+  border-bottom-color: rgba(150, 100, 45, 0.2);
+}
+.sk-light .qt-preview td {
+  border-top-color: rgba(150, 100, 45, 0.12);
+}
+.sk-light .qt-sheets {
+  background: rgba(232, 134, 46, 0.055);
+  border-color: rgba(150, 100, 45, 0.18);
+}
+.sk-light .qt-list-row.dragging {
+  background: rgba(232, 134, 46, 0.16);
+}
+
+/* Quick Tools statuses keep their hue but read on a light card. */
+.sk-light .qt-status.ok {
+  background: rgba(95, 174, 98, 0.14);
+  color: #2f6b33;
+}
+.sk-light .qt-status.err {
+  background: rgba(180, 72, 63, 0.1);
+  color: #a8392e;
+}
+
+/* Store costumes: deliberately compact so Appearance Studio keeps its shape. */
+.costume-manager {
+  margin-top: 12px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.costume-manager-head,
+.costume-update-row,
+.costume-item,
+.costume-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.costume-manager-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.costume-coming-soon {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 2px 7px;
+  border: 1px solid rgba(200, 169, 97, 0.38);
+  border-radius: 999px;
+  color: var(--sk-accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+.costume-manager-actions,
+.costume-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.costume-empty,
+.costume-status {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--sk-muted);
+  background: rgba(0, 0, 0, 0.12);
+}
+.costume-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.costume-item {
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.12);
+}
+.costume-item.disabled {
+  opacity: 0.62;
+}
+.costume-thumb {
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.costume-thumb.placeholder {
+  display: grid;
+  place-items: center;
+}
+.costume-copy {
+  min-width: 130px;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+.costume-copy span {
+  font-size: 11px;
+  color: var(--sk-muted);
+}
+.costume-update-row {
+  margin-top: 10px;
+}
+.costume-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  background: rgba(8, 7, 10, 0.48);
+}
+.costume-confirm {
+  width: min(440px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--sk-border);
+  border-radius: 14px;
+  color: var(--sk-ink);
+  background: var(--sk-panel);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+.costume-confirm-label {
+  color: var(--sk-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.costume-confirm h2 {
+  margin: 5px 0 14px;
+}
+.costume-confirm-preview {
+  width: 100%;
+  height: 150px;
+  margin-bottom: 14px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.12);
+}
+.costume-confirm-preview.placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--sk-accent);
+  font-size: 38px;
+}
+.costume-confirm dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+.costume-confirm dl div {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 8px;
+}
+.costume-confirm dt {
+  color: var(--sk-muted);
+}
+.costume-confirm dd {
+  margin: 0;
+}
+.costume-confirm p {
+  color: var(--sk-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.costume-confirm-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.sk-light .costume-manager {
+  border-top-color: rgba(150, 100, 45, 0.18);
+}
+.sk-light .costume-empty,
+.sk-light .costume-item,
+.sk-light .costume-status {
+  border-color: rgba(150, 100, 45, 0.18);
+  background: rgba(232, 134, 46, 0.05);
+}

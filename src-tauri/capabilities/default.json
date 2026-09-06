@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the MewMuze overlay window.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "autostart:default",
+    "updater:default",
+    "process:allow-restart",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}

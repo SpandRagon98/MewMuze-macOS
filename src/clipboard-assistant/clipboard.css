@@ -1,0 +1,578 @@
+/* Clipboard Assistant.
+
+   Styled from the same shared tokens as the Quick Tools panel, the context
+   menu and the settings window (see ui.css), so every surface around the cat
+   reads as one material. Both themes come from those tokens, so the warm-light
+   mode needs no separate rules here beyond the few places that use raw rgba. */
+
+.clipboard-badge {
+  position: absolute;
+  z-index: 31;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--sk-edge);
+  border-radius: 6px;
+  color: var(--sk-ink);
+  background: linear-gradient(180deg, #2b2f36, #1f2329);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 1px 2px rgba(0, 0, 0, 0.42),
+    0 6px 16px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  font-family: var(--sk-font);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  animation: clipboard-badge-in 0.22s ease-out, clipboard-badge-bob 1.4s ease-in-out 0.25s infinite;
+}
+
+.sk-light .clipboard-badge {
+  background: linear-gradient(180deg, #ffffff, #fff5ea);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(90, 60, 25, 0.16),
+    0 6px 16px rgba(90, 60, 25, 0.24);
+}
+
+.clipboard-badge:hover {
+  transform: translateY(-2px);
+}
+
+@keyframes clipboard-badge-in {
+  from { opacity: 0; transform: scale(0.72); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes clipboard-badge-bob {
+  0%, 100% { margin-top: 0; }
+  50% { margin-top: -2px; }
+}
+
+.clipboard-panel {
+  position: absolute;
+  z-index: 32;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--sk-ink);
+  font-family: var(--sk-font);
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  /* Same construction as .quick-tools: a top sheen falling off quickly over a
+     vertical body gradient, hairline inner highlight, real cast shadow. */
+  background:
+    radial-gradient(120% 46px at 50% 0%, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(180deg, #2b2f36, #1f2329 58%, #1b1e23);
+  border: 1px solid var(--sk-edge);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 1px 0 0 rgba(255, 255, 255, 0.03),
+    inset -1px 0 0 rgba(0, 0, 0, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.42),
+    0 18px 44px rgba(0, 0, 0, 0.58);
+  animation: clipboard-panel-in 0.18s ease-out;
+}
+
+.sk-light .clipboard-panel {
+  background:
+    radial-gradient(120% 46px at 50% 0%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(180deg, #ffffff, #fff6ec 58%, #fdf0e0);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(150, 100, 45, 0.08),
+    0 1px 2px rgba(90, 60, 25, 0.16),
+    0 18px 44px rgba(90, 60, 25, 0.3);
+}
+
+@keyframes clipboard-panel-in {
+  from { opacity: 0; transform: translateY(7px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---- title bar: transparent with a hairline rule, like .sk-titlebar ---- */
+.clipboard-head {
+  flex: none;
+  min-height: 40px;
+  padding: 10px 10px 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--sk-line);
+}
+
+.clipboard-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--sk-ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.clipboard-title i {
+  font-style: normal;
+  color: var(--sk-accent);
+}
+
+.clipboard-x {
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  color: var(--sk-ink-dim);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.clipboard-x:hover {
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sk-light .clipboard-x:hover {
+  background: rgba(120, 80, 30, 0.1);
+}
+
+.clipboard-shell {
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+/* Only this region scrolls, so the action dock below always stays on screen. */
+.clipboard-scroll {
+  min-height: 0;
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.clipboard-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.clipboard-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.clipboard-scroll::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  background-color: rgba(255, 255, 255, 0.14);
+}
+
+.clipboard-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.24);
+}
+
+.sk-light .clipboard-scroll {
+  scrollbar-color: rgba(150, 100, 45, 0.28) transparent;
+}
+
+.sk-light .clipboard-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(150, 100, 45, 0.28);
+}
+
+.sk-light .clipboard-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(150, 100, 45, 0.44);
+}
+
+.clipboard-card {
+  padding: 10px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sk-light .clipboard-card {
+  border-color: rgba(120, 80, 30, 0.12);
+  background: rgba(232, 134, 46, 0.05);
+}
+
+.clipboard-card.compact,
+.clipboard-card.links {
+  display: grid;
+  gap: 8px;
+}
+
+/* Section captions match .qt-section: small, uppercase, widely tracked. */
+.clipboard-label {
+  margin-bottom: 7px;
+  display: block;
+  color: var(--sk-ink-faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.clipboard-card.compact .clipboard-label,
+.clipboard-card.links .clipboard-label {
+  margin-bottom: 0;
+}
+
+/* Text wells: the same inset dark glass as .sk-input. */
+.clipboard-preview {
+  max-height: 84px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  color: var(--sk-ink);
+  background: rgba(0, 0, 0, 0.26);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.sk-light .clipboard-preview {
+  border-color: rgba(120, 80, 30, 0.18);
+  background: #fffdfa;
+  box-shadow: inset 0 1px 2px rgba(90, 60, 25, 0.08);
+  scrollbar-color: rgba(150, 100, 45, 0.28) transparent;
+}
+
+.clipboard-preview.result {
+  max-height: 104px;
+}
+
+.clipboard-counts,
+.clipboard-stats {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  color: var(--sk-ink-dim);
+  font-size: 11px;
+}
+
+.clipboard-stats span {
+  min-width: 30%;
+}
+
+.clipboard-stats b {
+  color: var(--sk-ink);
+  font-weight: 600;
+}
+
+.clipboard-details {
+  margin-top: 8px;
+  color: var(--sk-ink-dim);
+  font-size: 11px;
+}
+
+.clipboard-details summary {
+  cursor: pointer;
+  color: var(--sk-ink-dim);
+  font-weight: 600;
+}
+
+.clipboard-details summary:hover {
+  color: var(--sk-ink);
+}
+
+.clipboard-action-row,
+.clipboard-link-actions,
+.clipboard-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Selects match .sk-input exactly. */
+.clipboard-select {
+  min-width: 0;
+  min-height: 31px;
+  flex: 1 1 210px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  color: var(--sk-ink);
+  background: rgba(0, 0, 0, 0.26);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12.5px;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.clipboard-select:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.clipboard-select:focus {
+  outline: none;
+  border-color: var(--sk-accent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 3px rgba(200, 169, 97, 0.16);
+}
+
+.sk-light .clipboard-select {
+  border-color: rgba(120, 80, 30, 0.18);
+  background: #fffdfa;
+  box-shadow: inset 0 1px 2px rgba(90, 60, 25, 0.08);
+}
+
+.sk-light .clipboard-select:focus {
+  box-shadow: inset 0 1px 2px rgba(90, 60, 25, 0.08), 0 0 0 3px rgba(232, 134, 46, 0.18);
+}
+
+.clipboard-empty {
+  color: var(--sk-ink-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.clipboard-history {
+  max-height: 110px;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+  overflow: auto;
+  list-style: none;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-width: thin;
+}
+
+.clipboard-history li {
+  min-width: 0;
+  padding: 4px 5px 4px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 11px;
+}
+
+.sk-light .clipboard-history li {
+  border-color: rgba(120, 80, 30, 0.16);
+  background: #fffdfa;
+}
+
+.clipboard-history li span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipboard-history li button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  color: var(--sk-ink-dim);
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.clipboard-history li button:hover {
+  color: var(--sk-ink);
+  background: rgba(180, 72, 63, 0.3);
+}
+
+.sk-light .clipboard-history li button {
+  border-color: rgba(120, 80, 30, 0.18);
+  background: rgba(120, 80, 30, 0.07);
+}
+
+.sk-light .clipboard-history li button:hover {
+  background: rgba(180, 72, 63, 0.16);
+}
+
+/* Buttons: identical treatment to `.quick-tools .pixel-btn`. */
+.clipboard-panel .pixel-btn {
+  padding: 6px 13px;
+  border-radius: 7px;
+  color: var(--sk-ink);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.clipboard-panel .pixel-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.17);
+}
+
+.clipboard-panel .pixel-btn.primary {
+  background: var(--sk-green);
+  border-color: rgba(0, 0, 0, 0.25);
+  color: #0f1a10;
+  font-weight: 600;
+}
+
+.clipboard-panel .pixel-btn.primary:hover:not(:disabled) {
+  background: #6dbd70;
+}
+
+.clipboard-panel .pixel-btn.danger {
+  color: #f0a9a3;
+  border-color: rgba(180, 72, 63, 0.45);
+  background: rgba(180, 72, 63, 0.16);
+}
+
+.clipboard-panel .pixel-btn.danger:hover:not(:disabled) {
+  background: rgba(180, 72, 63, 0.28);
+}
+
+.sk-light .clipboard-panel .pixel-btn {
+  background: rgba(120, 80, 30, 0.07);
+  border-color: rgba(120, 80, 30, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.sk-light .clipboard-panel .pixel-btn:hover:not(:disabled) {
+  background: rgba(120, 80, 30, 0.12);
+  border-color: rgba(120, 80, 30, 0.24);
+}
+
+.sk-light .clipboard-panel .pixel-btn.danger {
+  color: #a8392e;
+  background: rgba(180, 72, 63, 0.1);
+}
+
+.clipboard-link-actions .pixel-btn,
+.clipboard-footer .pixel-btn {
+  min-height: 29px;
+  padding-inline: 10px;
+  font-size: 11.5px;
+}
+
+/* Status messages match .qt-status. */
+.clipboard-status {
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.clipboard-status.ok {
+  background: rgba(95, 174, 98, 0.14);
+  border-color: rgba(95, 174, 98, 0.4);
+  color: #bfe6bf;
+}
+
+.clipboard-status.err {
+  background: rgba(180, 72, 63, 0.16);
+  border-color: rgba(180, 72, 63, 0.45);
+  color: #f0a9a3;
+}
+
+.sk-light .clipboard-status.ok {
+  color: #2f6b33;
+}
+
+.sk-light .clipboard-status.err {
+  background: rgba(180, 72, 63, 0.1);
+  color: #a8392e;
+}
+
+/* Pinned to the bottom of the panel: never scrolls away. */
+.clipboard-action-dock {
+  padding: 10px 14px 12px;
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--sk-line);
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.sk-light .clipboard-action-dock {
+  background: rgba(232, 134, 46, 0.055);
+}
+
+.clipboard-footer {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.clipboard-footer .pixel-btn {
+  min-width: 0;
+  white-space: normal;
+}
+
+.clipboard-footer .copy-result {
+  grid-column: span 2;
+}
+
+.clipboard-panel .pixel-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.clipboard-exclusions {
+  min-height: 76px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clipboard-badge,
+  .clipboard-panel {
+    animation: none;
+  }
+}
+
+/* Small screens: tighten the chrome so the dock and a usable amount of the
+   scrolling body both stay on a short monitor. */
+@media (max-width: 560px), (max-height: 560px) {
+  .clipboard-head {
+    min-height: 36px;
+    padding-block: 7px;
+  }
+
+  .clipboard-scroll {
+    padding: 9px 10px;
+    gap: 8px;
+  }
+
+  .clipboard-action-dock {
+    padding: 8px 10px 9px;
+  }
+
+  .clipboard-footer {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

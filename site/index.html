@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MewMuze — a tiny cat that lives on your desktop</title>
+    <meta
+      name="description"
+      content="A tiny, adorable pixel cat that walks your Windows desktop, climbs your windows, chases your cursor and gently reminds you to rest. Fully local. No accounts, no tracking."
+    />
+    <meta property="og:title" content="MewMuze" />
+    <meta property="og:description" content="A tiny pixel cat that lives on your desktop. Fully local, no tracking." />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="icon.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-copy">
+        <h1>A tiny cat that lives<br />on your desktop.</h1>
+        <p class="tagline">
+          She walks along your window title bars, climbs the edges, chases your cursor, curls up for a nap
+          when you're away — and gently nudges you to stretch when you've been at it too long.
+        </p>
+        <div class="cta-row">
+          <a class="btn primary" href="#buy" data-buy>Buy — <span class="price">$19</span></a>
+          <a class="btn" href="#download">Try free for 14 days</a>
+        </div>
+        <p class="micro">Windows 10 &amp; 11 · ~4&nbsp;MB installer · one-time purchase, free updates</p>
+      </div>
+
+      <!-- Live, procedurally-animated cat: the same renderer the app ships,
+           so the hero is never a stale screenshot. -->
+      <div class="hero-demo">
+        <div class="demo-window">
+          <div class="demo-titlebar"><span class="dots"></span><span class="demo-title">your-window.txt</span></div>
+          <div class="demo-body">
+            <canvas id="catStage" width="640" height="280" aria-label="Animated pixel cat walking on a window"></canvas>
+          </div>
+        </div>
+        <p class="demo-caption">↑ live in your browser — this is the actual in-app renderer</p>
+      </div>
+    </header>
+
+    <section class="strip">
+      <div><strong>Fully local.</strong> No account, no telemetry, no network.</div>
+      <div><strong>Featherweight.</strong> Idles at a few percent of one core.</div>
+      <div><strong>Never in the way.</strong> Clicks pass straight through.</div>
+    </section>
+
+    <section class="features">
+      <h2>What she does</h2>
+      <div class="grid">
+        <article>
+          <h3>🪟 Lives in your windows</h3>
+          <p>
+            Walks title bars, sits on corners, hangs by two paws, clings to edges and climbs. Move a window and
+            she rides along; close it and she lands safely.
+          </p>
+        </article>
+        <article>
+          <h3>🖱️ Plays with your cursor</h3>
+          <p>
+            Watches it, stalks it, pounces, swipes, and occasionally catches it and dangles — then loses grip and
+            shakes it off. She never actually takes your cursor.
+          </p>
+        </article>
+        <article>
+          <h3>🫳 Squishy to hold</h3>
+          <p>
+            Pick her up and she stretches like mochi, body trailing behind your cursor, then springs back with a
+            bounce when you let go.
+          </p>
+        </article>
+        <article>
+          <h3>🧠 Knows what you're doing</h3>
+          <p>
+            Writes in a tiny notebook while you're in Word, taps a little keyboard while you type, puts on
+            headphones and dances when music plays, reads a book while you scroll.
+          </p>
+        </article>
+        <article>
+          <h3>☕ Looks after you</h3>
+          <p>
+            Pomodoro timer, stretch and water reminders, and a nudge to rest your eyes after a long stretch of
+            work — delivered on a little notebook page, never a system popup.
+          </p>
+        </article>
+        <article>
+          <h3>🎨 Make her yours</h3>
+          <p>
+            Five breeds with genuinely different builds, fur and eye colours, patterns, accessories — and
+            costumes that follow the calendar through the year.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="breeds">
+      <h2>Five breeds, five silhouettes</h2>
+      <p class="section-sub">Not palette swaps — each one is built differently.</p>
+      <div class="breed-row" id="breedRow"></div>
+    </section>
+
+    <section class="privacy">
+      <h2>🔒 Genuinely private</h2>
+      <p>
+        Most "smart" desktop apps earn that adjective by shipping your data somewhere. This one doesn't send
+        anything, anywhere.
+      </p>
+      <ul>
+        <li><strong>No keylogging.</strong> Typing reactions read only <em>how many</em> keys are down — never which.</li>
+        <li><strong>No screen capture.</strong> Window <em>positions</em> drive the climbing; contents are never read.</li>
+        <li><strong>No cursor history.</strong> Sampled to animate, discarded immediately.</li>
+        <li><strong>No account, no telemetry, no ads.</strong> Settings stay on your machine.</li>
+        <li><strong>One network call, ever</strong> — checking for an update, which you can switch off.</li>
+      </ul>
+    </section>
+
+    <section class="pricing" id="buy">
+      <h2>One purchase. Yours for good.</h2>
+      <div class="price-card">
+        <div class="price-big">$19</div>
+        <div class="price-note">one-time · free updates · 2 machines</div>
+        <ul>
+          <li>Everything in the free version</li>
+          <li>All five breeds</li>
+          <li>All costumes &amp; seasonal outfits</li>
+          <li>Fur, eye &amp; pattern customisation</li>
+          <li>Pomodoro, reminders &amp; work-rest nudges</li>
+          <li>App-aware reactions</li>
+        </ul>
+        <a class="btn primary wide" href="#" data-buy>Buy MewMuze</a>
+        <p class="micro center">Licence key arrives by email — paste it in Settings. No sign-in.</p>
+      </div>
+      <div class="free-card" id="download">
+        <h3>Or try it first</h3>
+        <p>
+          The download is the full app with a <strong>14-day trial</strong> of everything. After that the cat and all
+          her physics, climbing, dragging and petting stay free forever — only the extras lock.
+        </p>
+        <a class="btn wide" href="#" data-download>Download for Windows</a>
+        <p class="micro center">Windows 10/11 · 64-bit</p>
+      </div>
+    </section>
+
+    <section class="faq">
+      <h2>Questions</h2>
+      <details>
+        <summary>Will it get in the way of my work?</summary>
+        <p>
+          No. The overlay is click-through everywhere except the cat herself, so every click, tab and text field
+          behind her works normally. She also tucks into a corner automatically during full-screen video, games
+          and presentations.
+        </p>
+      </details>
+      <details>
+        <summary>Will it slow my machine down?</summary>
+        <p>
+          It's built in Rust and Tauri (not Electron) and renders adaptively — 60 FPS only while you're actively
+          playing with her, dropping to 15 when she's calm, ~7 asleep, and essentially nothing when hidden.
+        </p>
+      </details>
+      <details>
+        <summary>Does it really not send anything?</summary>
+        <p>
+          Correct. The only outbound request in the entire app is the update check, and that's a toggle. No
+          analytics library, no crash reporter, no account system.
+        </p>
+      </details>
+      <details>
+        <summary>What happens when the trial ends?</summary>
+        <p>
+          Nothing breaks and nothing nags you into a corner. The cat keeps living on your desktop with all her
+          movement and interaction; the customisation and productivity features simply lock until you unlock them.
+        </p>
+      </details>
+      <details>
+        <summary>Can I use it on more than one computer?</summary>
+        <p>Yes — a licence covers two machines. Just paste the same key into Settings on each.</p>
+      </details>
+      <details>
+        <summary>Is there a Mac version?</summary>
+        <p>Not yet. It's Windows 10/11 only today.</p>
+      </details>
+    </section>
+
+    <footer>
+      <p>MewMuze · built with Tauri &amp; Rust · <a href="#" data-support>Support</a></p>
+    </footer>
+
+    <script type="module" src="./demo.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pixel Cat interaction harness</title>
+    <style>
+      html, body, #root { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#20242e; user-select:none; }
+      canvas { image-rendering: pixelated; }
+      #hud { position:fixed; left:8px; top:8px; z-index:99999; font:12px/1.5 monospace; color:#cfe; background:#000a; padding:8px; border-radius:6px; pointer-events:none; white-space:pre; }
+    </style>
+  </head>
+  <body>
+    <!--
+      DEV-ONLY test harness. Stubs the Tauri IPC so the whole interaction
+      pipeline (global cursor -> hit test -> click-through -> drag/menu) can be
+      driven and inspected in a plain browser. Not shipped: only index.html is
+      referenced by the Tauri build.
+    -->
+    <script>
+      const H = {
+        cursor: { x: 400, y: 700 },
+        clickThrough: null,
+        clickThroughCalls: 0,
+        catVisible: true,
+        invokes: {},
+        settings: null,
+        micActive: false,
+        pdfRender: true,
+        fullscreen: false, // set true to simulate a fullscreen foreground app (peekAuto trigger)
+      };
+      window.__h = H;
+      const reply = (cmd, args) => {
+        H.invokes[cmd] = (H.invokes[cmd] || 0) + 1;
+        switch (cmd) {
+          case "get_cursor_position": return { x: H.cursor.x, y: H.cursor.y };
+          case "get_monitors": return [{ left:0, top:0, right:1920, bottom:1080, workLeft:0, workTop:0, workRight:1920, workBottom:1032, scale:1, isPrimary:true }];
+          case "enumerate_windows": return [];
+          case "load_settings": return H.settings;
+          case "save_settings": H.settings = args && args.settings ? args.settings : H.settings; return null;
+          case "set_click_through": H.clickThrough = args.through; H.clickThroughCalls++; return null;
+          case "set_cat_visible": H.catVisible = args.visible; return null;
+          case "position_overlay": return null;
+          case "update_tray": return null;
+          case "get_keyboard_activity": return 0;
+          case "get_scroll_delta": return 0;
+          case "is_fullscreen_active": return H.fullscreen === true;
+          case "get_foreground_app": return null;
+          case "get_media_playing": return false;
+          case "read_agent_status": return null;
+          case "get_mic_active": return H.micActive;
+          case "verify_license": return { valid:false, name:"", order:"", error:"" };
+          // Quick Tools. Set H.pdfRender = false to exercise the panel's
+          // "renderer unavailable" path without removing pdfium.dll.
+          case "convert_support": return { pdfRender: H.pdfRender, reason: H.pdfRender ? "" : "The PDF renderer (pdfium) is not installed alongside the app." };
+          case "images_to_pdf": return args.output;
+          case "pdf_to_images": return [];
+          default: return null;
+        }
+      };
+      // Set H.hang = ["get_media_playing"] to simulate a native command that
+      // never returns (the real GSMTC deadlock) and prove the app survives it.
+      H.hang = [];
+      window.__TAURI_INTERNALS__ = {
+        invoke: (cmd, args) => {
+          H.invokes[cmd] = (H.invokes[cmd] || 0) + 1;
+          if (H.hang.includes(cmd)) return new Promise(() => {}); // never settles
+          return Promise.resolve(reply(cmd, args || {}));
+        },
+        transformCallback: (cb) => { const id = Math.floor(Math.random()*1e9); window[`_${id}`] = cb; return id; },
+        metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+      };
+      // The embedded test browser never fires requestAnimationFrame, so drive
+      // the render loop off timers instead. Without this the whole main loop
+      // (hit testing, click-through, drawing) simply never runs here.
+      window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);
+      window.cancelAnimationFrame = (id) => clearTimeout(id);
+
+      // Surface any error that would otherwise vanish silently.
+      window.__errors = [];
+      window.addEventListener("error", (e) => window.__errors.push("error: " + e.message));
+      window.addEventListener("unhandledrejection", (e) => window.__errors.push("reject: " + e.reason));
+    </script>
+    <div id="root"></div>
+    <div id="hud">harness booting…</div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      const hud = document.getElementById("hud");
+      setInterval(() => {
+        const H = window.__h;
+        hud.textContent =
+          `cursor      ${H.cursor.x},${H.cursor.y}\n` +
+          `clickThrough ${H.clickThrough}  (calls ${H.clickThroughCalls})\n` +
+          `catVisible  ${H.catVisible}\n` +
+          `cursorPolls ${H.invokes["get_cursor_position"] || 0}\n` +
+          `errors      ${window.__errors.length}`;
+      }, 200);
+    </script>
+  </body>
+</html>

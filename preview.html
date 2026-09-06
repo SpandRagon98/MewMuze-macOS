@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Cat sprite preview</title>
+    <style>
+      body { margin: 0; background: #cfd6e6; color: #182032; font-family: system-ui, sans-serif; }
+      header { padding: 18px 18px 0; }
+      h1 { margin: 0; font-size: 20px; }
+      p { margin: 5px 0 0; color: #566176; font-size: 13px; }
+      #grid { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; }
+      figure { margin: 0; text-align: center; background: #e8edf7; border-radius: 8px; padding: 8px; }
+      canvas { image-rendering: pixelated; background: #dfe4f0; }
+      figcaption { font-size: 12px; color: #333; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Pixel Cat directional pose gallery</h1>
+      <p>Refined side neck, curled sleep, exaggerated stretch, and accessory previews.</p>
+    </header>
+    <div id="grid"></div>
+    <script type="module">
+      import { configureAppearance, renderFrame, DEFAULT_APPEARANCE, DEFAULT_POSE } from "/src/animation/spriteLoader.ts";
+      const poses = [
+        ["side neck (warm fur)", { view: "side", body: "stand", legPhase: 0, stride: 1.05, ears: "perk", tail: "up" }, { furColor: "#b36a24", earColor: "#ed8a3f" }],
+        ["side walk .25", { view: "side", body: "stand", legPhase: 0.25, stride: 1.05, ears: "perk", tail: "up" }],
+        ["side walk .5", { view: "side", body: "stand", legPhase: 0.5, stride: 1.05, ears: "perk", tail: "flick" }],
+        ["side run", { view: "side", body: "stand", legPhase: 0.75, stride: 1.45, eyes: "wide", ears: "back", tail: "flick" }],
+        ["full sprint", { view: "side", body: "stand", legPhase: 0.25, stride: 1.8, eyes: "wide", ears: "back", tail: "down" }],
+        ["slow stalk", { view: "side", body: "crouch", legPhase: 0.25, eyes: "wide", ears: "perk", tail: "down" }],
+        ["side jump", { view: "side", body: "air", eyes: "wide", ears: "back", tail: "up" }],
+        ["pounce wiggle", { view: "side", body: "crouch", gesture: "wiggle", eyes: "wide", ears: "back", tail: "flick" }],
+        ["side sit", { view: "side", body: "sit", eyes: "open", ears: "up", tail: "wrap" }],
+        ["sleep inhale", { view: "side", body: "lie", eyes: "closed", ears: "back", tail: "tuck", zzz: true, headBob: 0 }],
+        ["sleep exhale", { view: "side", body: "lie", eyes: "closed", ears: "back", tail: "tuck", zzz: false, headBob: 1 }],
+        ["wide sleepy yawn", { view: "front", body: "sit", eyes: "closed", ears: "back", tail: "wrap", mouth: "yawn", headBob: -1 }],
+        ["deep stretch", { view: "side", body: "stretch", eyes: "happy", ears: "back", tail: "up", legPhase: 1, headBob: 1 }],
+        ["front sit", { view: "front", body: "sit", eyes: "open", ears: "up", tail: "curl" }],
+        ["front blink", { view: "front", body: "sit", eyes: "closed", ears: "up", tail: "tuck" }],
+        ["petting neck fixed", { view: "front", body: "loaf", eyes: "half", ears: "back", headBob: 1, hearts: true }, { furColor: "#b36a24", earColor: "#ed8a3f" }],
+        ["cute nod start", { view: "front", body: "sit", eyes: "wide", ears: "perk", mouth: "smile" }],
+        ["cute nod down", { view: "front", body: "sit", eyes: "closed", ears: "perk", mouth: "smile", blush: true, headBob: 2 }],
+        ["groom paw", { view: "front", body: "sit", gesture: "groom", legPhase: 0.2, eyes: "half", ears: "up" }],
+        ["front dangle", { view: "front", body: "dangle", eyes: "surprised", ears: "flat" }],
+        ["two-paw hang", { view: "front", body: "hang", gesture: "hangTwo", legPhase: 0.1, eyes: "wide", ears: "back" }],
+        ["one-paw hang", { view: "front", body: "hang", gesture: "hangOne", legPhase: 0.6, eyes: "surprised", ears: "flat" }],
+        ["back idle", { view: "back", body: "sit", ears: "up", tail: "flick" }],
+        ["back climb A", { view: "back", body: "climb", legPhase: 0, ears: "perk" }],
+        ["back climb B", { view: "back", body: "climb", legPhase: 0.5, ears: "perk" }],
+        ["3/4 turn", { view: "threeQuarter", body: "sit", eyes: "open", ears: "perk" }],
+        ["side sunglasses", { view: "side", body: "stand", eyes: "open", ears: "perk", tail: "up" }, { earColor: "#ff784f", accessory: "sunglasses" }],
+        ["front sunglasses", { view: "front", body: "sit", eyes: "open", ears: "up", tail: "wrap" }, { earColor: "#a878e8", accessory: "sunglasses" }],
+        ["side headphones", { view: "side", body: "stand", eyes: "open", ears: "up", tail: "curl" }, { earColor: "#57b8ff", accessory: "headphones" }],
+        ["front headphones", { view: "front", body: "sit", eyes: "open", ears: "up", tail: "wrap" }, { earColor: "#ff9a62", accessory: "headphones" }],
+        ["side bandana", { view: "side", body: "stand", eyes: "open", ears: "up", tail: "curl" }, { accessory: "bandana" }],
+        ["front bandana", { view: "front", body: "sit", eyes: "open", ears: "up", tail: "wrap" }, { accessory: "bandana" }],
+        ["side watch", { view: "side", body: "stand", eyes: "open", ears: "up", tail: "curl" }, { accessory: "watch" }],
+        ["front watch", { view: "front", body: "sit", eyes: "open", ears: "up", tail: "wrap" }, { accessory: "watch" }],
+        ["side hat", { view: "side", body: "stand", eyes: "open", ears: "up", tail: "curl" }, { accessory: "hat" }],
+        ["front hat", { view: "front", body: "sit", eyes: "open", ears: "up", tail: "wrap" }, { accessory: "hat" }],
+        ["side cap", { view: "side", body: "stand", eyes: "open", ears: "up", tail: "curl" }, { accessory: "cap" }],
+        ["front cap", { view: "front", body: "sit", eyes: "open", ears: "up", tail: "wrap" }, { accessory: "cap" }],
+        ["front glasses (motivation)", { view: "front", body: "sit", eyes: "open", mouth: "smile", tail: "wrap" }, { accessory: "glasses" }],
+        ["happy blush", { view: "front", body: "sit", eyes: "happy", mouth: "smile", tail: "up", blush: true }],
+        ["pupils track cursor", { view: "front", body: "sit", eyes: "open", pupilX: 2, pupilY: -1 }],
+        ["writeNotes", { view: "front", body: "sit", prop: "notebook", eyes: "down", tail: "wrap" }],
+        ["typeKeys", { view: "front", body: "sit", prop: "keyboard", legPhase: 0.2, eyes: "down" }],
+        ["readBook", { view: "front", body: "sit", prop: "book", eyes: "down" }],
+        ["dance + notes", { view: "front", body: "sit", eyes: "happy", mouth: "smile", notes: true, headBob: -1, tail: "up" }, { accessory: "headphones" }],
+        // --- breeds (front + side so silhouette differences are visible) ---
+        ["classic front", { view: "front", body: "sit", tail: "wrap" }, { species: "classic" }],
+        ["chonk front", { view: "front", body: "sit", tail: "wrap" }, { species: "chonk" }],
+        ["fluffy front", { view: "front", body: "sit", tail: "wrap" }, { species: "fluffy" }],
+        ["siamese front", { view: "front", body: "sit", tail: "wrap" }, { species: "siamese" }],
+        ["kitten front", { view: "front", body: "sit", tail: "wrap" }, { species: "kitten" }],
+        ["chonk side", { view: "side", body: "stand", legPhase: 0.25, stride: 1.05, tail: "up" }, { species: "chonk" }],
+        ["fluffy side", { view: "side", body: "stand", legPhase: 0.25, stride: 1.05, tail: "up" }, { species: "fluffy" }],
+        ["siamese side", { view: "side", body: "stand", legPhase: 0.25, stride: 1.05, tail: "up" }, { species: "siamese" }],
+        ["kitten side", { view: "side", body: "stand", legPhase: 0.25, stride: 1.05, tail: "up" }, { species: "kitten" }],
+        ["chonk sleep", { view: "side", body: "lie", eyes: "closed", tail: "tuck", zzz: true }, { species: "chonk" }],
+        // --- seasonal costumes ---
+        ["santa hat", { view: "front", body: "sit", tail: "wrap" }, { accessory: "santaHat" }],
+        ["witch hat", { view: "front", body: "sit", tail: "wrap" }, { accessory: "witchHat" }],
+        ["party hat", { view: "front", body: "sit", tail: "wrap" }, { accessory: "partyHat" }],
+        ["flower crown", { view: "front", body: "sit", tail: "wrap" }, { accessory: "flowerCrown" }],
+        ["winter scarf", { view: "front", body: "sit", tail: "wrap" }, { accessory: "scarf" }],
+        ["santa side", { view: "side", body: "sit", tail: "wrap" }, { accessory: "santaHat" }],
+        ["witch side", { view: "side", body: "sit", tail: "wrap" }, { accessory: "witchHat" }],
+        ["top hat", { view: "front", body: "sit", tail: "wrap" }, { accessory: "hat" }],
+      ];
+      const grid = document.getElementById("grid");
+      const SCALE = 5;
+      for (const [label, p, appearance] of poses) {
+        configureAppearance({ ...DEFAULT_APPEARANCE, ...appearance });
+        const sprite = renderFrame({ ...DEFAULT_POSE, ...p });
+        const c = document.createElement("canvas");
+        c.width = sprite.width * SCALE;
+        c.height = sprite.height * SCALE;
+        const ctx = c.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(sprite, 0, 0, c.width, c.height);
+        const fig = document.createElement("figure");
+        fig.appendChild(c);
+        const cap = document.createElement("figcaption");
+        cap.textContent = label;
+        fig.appendChild(cap);
+        grid.appendChild(fig);
+      }
+    </script>
+  </body>
+</html>

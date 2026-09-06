@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "resources": {
+      "lib/libpdfium.dylib": "libpdfium.dylib"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://mewmuze.com/updates/macos/latest.json"]
+    }
+  }
+}

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Merged into the generated app bundle by Tauri on macOS builds only.
+      Windows packaging never reads this file.
+    -->
+
+    <!-- Menu-bar-only app: no Dock icon, no app switcher entry. This is the
+         macOS equivalent of the Windows overlay's skipTaskbar, and it is what
+         lets the cat live on the desktop without occupying a Dock slot. The
+         tray menu remains the way to reach Settings and Quit. -->
+    <key>LSUIElement</key>
+    <true/>
+
+    <!-- The overlay must never steal focus from the app the user is working in. -->
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+
+    <!--
+      Permission prompt copy. macOS shows these strings verbatim, so they must
+      explain the real reason in the user's language rather than a generic
+      "this app wants access". MewMuze only ever reads aggregate signals.
+    -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>MewMuze uses this only to open links you click in the Clipboard Assistant.</string>
+</dict>
+</plist>

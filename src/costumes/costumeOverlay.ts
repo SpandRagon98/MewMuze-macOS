@@ -1,0 +1,533 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { CatView, PoseSpec } from "../animation/spriteLoader";
+
+interface VisualLayerPayload {
+  dataUrl: string;
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+  opacity: number;
+}
+
+interface CostumeVisualsPayload {
+  costumeId: string;
+  supportedBodies: string[];
+  views: Record<string, Record<string, VisualLayerPayload>>;
+}
+
+interface LoadedLayer extends Omit<VisualLayerPayload, "dataUrl"> {
+  image: HTMLImageElement;
+}
+
+type ArmorVariant = "base" | "maskOpen" | "eyeGlow";
+
+const IRON_MAN_CAT_ID = "mewmuze.iron-man-cat.v1";
+const DESIGN_SIZE = 48;
+const ARMOR = {
+  outline: "#32171c",
+  deep: "#5b181f",
+  red: "#ab2626",
+  redLight: "#d04432",
+  gold: "#efb137",
+  goldLight: "#ffda67",
+  cyan: "#63e7ff",
+  white: "#efffff",
+};
+
+let activeCostumeId = "";
+let activeViews = new Map<string, Map<string, LoadedLayer>>();
+let overlayEpochValue = 0;
+let composites = new WeakMap<object, Map<string, HTMLCanvasElement>>();
+
+function loadImage(source: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("The costume image could not be decoded."));
+    image.src = source;
+  });
+}
+
+export async function activateCostumeOverlay(costumeId: string): Promise<string[]> {
+  if (!costumeId) {
+    activeCostumeId = "";
+    activeViews = new Map();
+    composites = new WeakMap();
+    overlayEpochValue += 1;
+    return [];
+  }
+  const payload = await invoke<CostumeVisualsPayload>("get_costume_visuals", { costumeId });
+  const loaded = new Map<string, Map<string, LoadedLayer>>();
+  await Promise.all(
+    Object.entries(payload.views).flatMap(([view, variants]) =>
+      Object.entries(variants).map(async ([variant, layer]) => {
+        let viewLayers = loaded.get(view);
+        if (!viewLayers) {
+          viewLayers = new Map();
+          loaded.set(view, viewLayers);
+        }
+        viewLayers.set(variant, {
+          image: await loadImage(layer.dataUrl),
+          offsetX: layer.offsetX,
+          offsetY: layer.offsetY,
+          scale: layer.scale,
+          opacity: layer.opacity,
+        });
+      }),
+    ),
+  );
+  activeCostumeId = payload.costumeId;
+  activeViews = loaded;
+  composites = new WeakMap();
+  overlayEpochValue += 1;
+  return payload.supportedBodies;
+}
+
+export function costumeOverlayEpoch(): number {
+  return overlayEpochValue;
+}
+
+export function activeCostume(): string {
+  return activeCostumeId;
+}
+
+function variantAt(now: number, variants: Map<string, LoadedLayer>): ArmorVariant {
+  const maskOpen = variants.has("maskOpen") && now % 10_000 >= 7_600;
+  const eyeGlow = !maskOpen && variants.has("eyeGlow") && now % 4_700 >= 3_950;
+  return maskOpen ? "maskOpen" : eyeGlow ? "eyeGlow" : "base";
+}
+
+/**
+ * Included in the renderer signature so a motionless cat still opens its mask
+ * and pulses the helmet eyes at the intended moments.
+ */
+export function costumeOverlayFrame(now = performance.now()): string {
+  if (!activeCostumeId) return "";
+  const variants = activeViews.get("front") ?? activeViews.get("all");
+  if (!variants) return "";
+  return variantAt(now, variants);
+}
+
+function polygon(
+  ctx: CanvasRenderingContext2D,
+  points: Array<[number, number]>,
+  fill: string,
+  stroke = ARMOR.outline,
+  width = 1,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i][0], points[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+function ellipse(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rx: number,
+  ry: number,
+  fill: string,
+  stroke = ARMOR.outline,
+  width = 1,
+): void {
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+function armorLine(
+  ctx: CanvasRenderingContext2D,
+  points: Array<[number, number]>,
+  color: string,
+  width: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i][0], points[i][1]);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+function armoredTail(
+  ctx: CanvasRenderingContext2D,
+  start: [number, number],
+  control: [number, number],
+  end: [number, number],
+): void {
+  const trace = (color: string, width: number) => {
+    ctx.beginPath();
+    ctx.moveTo(start[0], start[1]);
+    ctx.quadraticCurveTo(control[0], control[1], end[0], end[1]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  };
+  trace(ARMOR.outline, 5.2);
+  trace(ARMOR.red, 3.7);
+  for (const t of [0.22, 0.44, 0.66, 0.86]) {
+    const u = 1 - t;
+    const x = u * u * start[0] + 2 * u * t * control[0] + t * t * end[0];
+    const y = u * u * start[1] + 2 * u * t * control[1] + t * t * end[1];
+    ellipse(ctx, x, y, 0.78, 1.25, ARMOR.gold, ARMOR.outline, 0.45);
+  }
+}
+
+function drawFrontTailArmor(ctx: CanvasRenderingContext2D, pose: PoseSpec, bodyX: number): void {
+  if (pose.view === "threeQuarter") {
+    armoredTail(ctx, [16, 39], [7.5, 38], [9.5, 24]);
+    return;
+  }
+  if (pose.body === "dangle" || pose.body === "hang") {
+    armoredTail(ctx, [17.5, 36], [10, 39], [11.5, 26]);
+  } else if (pose.tail === "wrap" || pose.tail === "tuck") {
+    armoredTail(ctx, [bodyX + 7, 40], [38.5, 45.5], [16.5, 44.4]);
+  } else if (pose.tail === "down") {
+    armoredTail(ctx, [bodyX + 7.5, 39], [37, 43], [40, 40]);
+  } else {
+    armoredTail(ctx, [bodyX + 7.5, 39], [41.5, 34], [38.5, 21.5]);
+  }
+}
+
+function eyeSlits(
+  ctx: CanvasRenderingContext2D,
+  left: Array<[number, number]>,
+  right: Array<[number, number]> | null,
+  glow: boolean,
+): void {
+  ctx.save();
+  if (glow) {
+    ctx.shadowColor = ARMOR.cyan;
+    ctx.shadowBlur = 3;
+  }
+  armorLine(ctx, left, glow ? ARMOR.white : ARMOR.cyan, glow ? 1.55 : 1.05);
+  if (right) armorLine(ctx, right, glow ? ARMOR.white : ARMOR.cyan, glow ? 1.55 : 1.05);
+  ctx.restore();
+}
+
+function drawFrontHelmet(
+  ctx: CanvasRenderingContext2D,
+  hx: number,
+  hy: number,
+  variant: ArmorVariant,
+  threeQuarter: boolean,
+): void {
+  const lean = threeQuarter ? 0.8 : 0;
+  // Ear caps keep the feline silhouette and the user's original ear tips visible.
+  polygon(ctx, [[hx - 10.2, hy - 5.3], [hx - 8.3, hy - 11], [hx - 5.9, hy - 6.6], [hx - 7.1, hy - 3.5]], ARMOR.red);
+  polygon(ctx, [[hx + 6.5, hy - 6.5], [hx + 8.5, hy - 11], [hx + 10.3, hy - 5.1], [hx + 7.2, hy - 3.5]], ARMOR.red);
+
+  if (variant === "maskOpen") {
+    // The faceplate hinges above the forehead; no pixel covers the cat's eyes,
+    // nose, mouth, fur pattern, or eyelashes while it is open.
+    polygon(
+      ctx,
+      [
+        [hx - 7.8, hy - 10.2],
+        [hx - 5.8, hy - 13.5],
+        [hx + 5.6, hy - 13.5],
+        [hx + 8.2, hy - 10.1],
+        [hx + 6.1, hy - 7.7],
+        [hx - 6, hy - 7.7],
+      ],
+      ARMOR.gold,
+    );
+    polygon(ctx, [[hx - 6, hy - 13.2], [hx + 5.7, hy - 13.2], [hx + 4.2, hy - 10.4], [hx - 4.5, hy - 10.4]], ARMOR.red);
+    ellipse(ctx, hx - 10.1, hy + 0.5, 1.65, 4.8, ARMOR.deep);
+    ellipse(ctx, hx + 10.1, hy + 0.5, 1.65, 4.8, ARMOR.deep);
+    return;
+  }
+
+  // A fitted central mask leaves a narrow fur/cheek rim visible, so the armor
+  // reads as something this exact cat is wearing rather than a replacement cat.
+  polygon(
+    ctx,
+    [
+      [hx - 8.8, hy - 7.6],
+      [hx - 5.6, hy - 10],
+      [hx + 5.7, hy - 10],
+      [hx + 8.9, hy - 7.2],
+      [hx + 8.2 + lean, hy + 5.7],
+      [hx + 3.8 + lean, hy + 9],
+      [hx - 3.8 + lean, hy + 9],
+      [hx - 8.2, hy + 5.7],
+    ],
+    ARMOR.gold,
+  );
+  polygon(ctx, [[hx - 7, hy - 8.6], [hx + 7.1, hy - 8.6], [hx + 5.8, hy - 5.5], [hx - 5.8, hy - 5.5]], ARMOR.red);
+  polygon(ctx, [[hx - 8.2, hy + 5.2], [hx - 3.8, hy + 8.8], [hx - 3.2, hy + 5.6], [hx - 6.7, hy + 3.3]], ARMOR.red);
+  polygon(ctx, [[hx + 8.2, hy + 5.2], [hx + 3.8, hy + 8.8], [hx + 3.2, hy + 5.6], [hx + 6.7, hy + 3.3]], ARMOR.red);
+  eyeSlits(
+    ctx,
+    [[hx - 6.3, hy - 0.9], [hx - 1.5, hy + 0.1]],
+    [[hx + 1.5, hy + 0.1], [hx + 6.3, hy - 0.9]],
+    variant === "eyeGlow",
+  );
+}
+
+function frontBodyGeometry(pose: PoseSpec): { hx: number; hy: number; by: number; brx: number; bry: number } {
+  const threeQuarter = pose.view === "threeQuarter";
+  if (threeQuarter) {
+    return {
+      hx: 26.5 + pose.headTurnX * 0.95,
+      hy: 16.5 + pose.headBob + pose.headTurnY * 0.62,
+      by: 36,
+      brx: 8.8,
+      bry: 7.6,
+    };
+  }
+  let hy = 15.5 + pose.headBob;
+  let by = 34;
+  let brx = 9;
+  let bry = 8.8;
+  if (pose.body === "loaf") {
+    hy = 18 + pose.headBob;
+    by = 38.5;
+    brx = 12.5;
+    bry = 6;
+  } else if (pose.body === "dangle") {
+    hy = 14 + pose.headBob;
+    by = 32;
+    brx = 7.6;
+    bry = 8;
+  } else if (pose.body === "hang") {
+    hy = 20 + pose.headBob;
+    by = 34;
+    brx = 7.6;
+    bry = 8.2;
+  }
+  return {
+    hx: 24 + pose.headTurnX * 0.95,
+    hy: hy + pose.headTurnY * 0.62,
+    by,
+    brx,
+    bry,
+  };
+}
+
+function drawFrontArmor(ctx: CanvasRenderingContext2D, pose: PoseSpec, variant: ArmorVariant): void {
+  const { hx, hy, by, brx, bry } = frontBodyGeometry(pose);
+  const threeQuarter = pose.view === "threeQuarter";
+  const bodyX = threeQuarter ? 23 : 24;
+  const half = Math.max(5.6, brx * 0.72);
+  const top = by - bry * 0.72;
+  const bottom = Math.min(43, by + bry * 0.72);
+
+  // The tail gets articulated suit segments while the outer haunches and
+  // cheeks retain enough original fur to keep the underlying cat recognizable.
+  drawFrontTailArmor(ctx, pose, bodyX);
+  polygon(
+    ctx,
+    [
+      [bodyX - half, top + 1],
+      [bodyX - half + 2, top - 1.7],
+      [bodyX + half - 2, top - 1.7],
+      [bodyX + half, top + 1],
+      [bodyX + half - 1.1, bottom],
+      [bodyX - half + 1.1, bottom],
+    ],
+    ARMOR.red,
+  );
+  polygon(ctx, [[bodyX - half + 1.5, top + 1.5], [bodyX, top - 0.5], [bodyX + half - 1.5, top + 1.5], [bodyX + 3.8, by + 3.7], [bodyX - 3.8, by + 3.7]], ARMOR.redLight);
+  ellipse(ctx, bodyX, by + 0.8, 3.3, 3.3, ARMOR.gold);
+  ellipse(ctx, bodyX, by + 0.8, 2, 2, ARMOR.cyan, ARMOR.white, 0.65);
+  polygon(ctx, [[bodyX - half - 1.2, top + 1.4], [bodyX - half + 1.4, top - 1.5], [bodyX - half + 3.1, top + 2.2], [bodyX - half + 0.2, top + 4]], ARMOR.gold);
+  polygon(ctx, [[bodyX + half + 1.2, top + 1.4], [bodyX + half - 1.4, top - 1.5], [bodyX + half - 3.1, top + 2.2], [bodyX + half - 0.2, top + 4]], ARMOR.gold);
+  armorLine(ctx, [[bodyX, by + 4.2], [bodyX, bottom - 0.5]], ARMOR.gold, 1.4);
+
+  if (pose.body === "loaf") {
+    polygon(ctx, [[bodyX - 8.5, 40], [bodyX - 3.5, 39.1], [bodyX - 3, 44], [bodyX - 8.4, 44]], ARMOR.red);
+    polygon(ctx, [[bodyX + 3.5, 39.1], [bodyX + 8.5, 40], [bodyX + 8.4, 44], [bodyX + 3, 44]], ARMOR.red);
+  } else if (pose.body !== "hang") {
+    for (const pawX of [bodyX - 4.4, bodyX + 4.4]) {
+      polygon(ctx, [[pawX - 2.2, 40.5], [pawX + 2.2, 40.5], [pawX + 2.5, 44.3], [pawX - 2.5, 44.3]], ARMOR.red);
+      armorLine(ctx, [[pawX - 2, 43.4], [pawX + 2, 43.4]], ARMOR.goldLight, 1.25);
+    }
+  }
+  drawFrontHelmet(ctx, hx, hy, variant, threeQuarter);
+}
+
+function sideGeometry(pose: PoseSpec): { bx: number; by: number; brx: number; bry: number; hx: number; hy: number; hrx: number; hry: number } {
+  const gait = Math.sin(pose.legPhase * Math.PI * 2);
+  let bx = 17.5;
+  let by = 34.5 - Math.max(0, gait) * 0.6;
+  let brx = 9.6;
+  let bry = 7;
+  let hx = 31;
+  let hy = 21.5 + pose.headBob - Math.max(0, gait) * 0.4;
+  let hrx = 10.2;
+  let hry = 9.6;
+  if (pose.body === "crouch") ({ bx, by, brx, bry, hx, hy } = { bx: 17.5, by: 37, brx: 11, bry: 5.4, hx: 32, hy: 24 + pose.headBob });
+  if (pose.body === "air") ({ bx, by, brx, bry, hx, hy } = { bx: 16.5, by: 31, brx: 11, bry: 5.8, hx: 33, hy: 19 + pose.headBob });
+  if (pose.body === "lie") ({ bx, by, brx, bry, hx, hy, hrx, hry } = { bx: 19, by: 40, brx: 12.5, bry: 4.2, hx: 33, hy: 32 + pose.headBob, hrx: 9, hry: 8.4 });
+  if (pose.body === "sit") ({ bx, by, brx, bry, hx, hy } = { bx: 20.5, by: 34.5, brx: 8.3, bry: 9.2, hx: 27.5, hy: 20 + pose.headBob });
+  if (pose.body === "stretch") {
+    const reach = Math.max(0, Math.min(1, pose.legPhase));
+    bx = 15 + reach * 1.5;
+    by = 32.5 - reach * 1.5;
+    brx = 11.5;
+    bry = 5.8;
+    hx = 33 + reach * 2;
+    hy = 30 + reach * 5 + pose.headBob;
+  }
+  hx += pose.headTurnX * 0.95;
+  hy += pose.headTurnY * 0.62;
+  return { bx, by, brx, bry, hx, hy, hrx, hry };
+}
+
+function drawSideHelmet(
+  ctx: CanvasRenderingContext2D,
+  hx: number,
+  hy: number,
+  hrx: number,
+  hry: number,
+  variant: ArmorVariant,
+): void {
+  polygon(ctx, [[hx - 5.5, hy - hry + 3], [hx - 3.8, hy - hry - 2], [hx - 1.2, hy - hry + 3.2]], ARMOR.red);
+  polygon(ctx, [[hx + 1.4, hy - hry + 2.6], [hx + 4.2, hy - hry - 2], [hx + 5.5, hy - hry + 3.5]], ARMOR.red);
+  if (variant === "maskOpen") {
+    polygon(ctx, [[hx - 4.8, hy - hry - 0.5], [hx + 4.8, hy - hry - 0.5], [hx + 7, hy - hry + 3], [hx - 3.3, hy - hry + 3.2]], ARMOR.gold);
+    polygon(ctx, [[hx - 3.5, hy - hry], [hx + 3.8, hy - hry], [hx + 4.8, hy - hry + 1.4], [hx - 2.8, hy - hry + 1.5]], ARMOR.red);
+    ellipse(ctx, hx - hrx + 1.2, hy + 0.8, 1.4, 4.4, ARMOR.deep);
+    return;
+  }
+  polygon(
+    ctx,
+    [[hx - 5.5, hy - 6.7], [hx + 3.5, hy - 7.8], [hx + 8.1, hy - 3], [hx + 7.1, hy + 5.2], [hx + 3.4, hy + 8], [hx - 4.4, hy + 5.7]],
+    ARMOR.gold,
+  );
+  polygon(ctx, [[hx - 3.8, hy - 7.2], [hx + 3.8, hy - 7], [hx + 5.4, hy - 4.5], [hx - 2.8, hy - 4.4]], ARMOR.red);
+  polygon(ctx, [[hx + 6.9, hy + 4.8], [hx + 3.2, hy + 7.8], [hx + 1.9, hy + 4.8], [hx + 5.5, hy + 2.7]], ARMOR.red);
+  eyeSlits(ctx, [[hx + 0.4, hy - 1.1], [hx + 6.2, hy - 0.5]], null, variant === "eyeGlow");
+}
+
+function drawSideArmor(ctx: CanvasRenderingContext2D, pose: PoseSpec, variant: ArmorVariant): void {
+  const { bx, by, brx, bry, hx, hy, hrx, hry } = sideGeometry(pose);
+  if (pose.body === "lie" && pose.eyes === "closed") {
+    polygon(ctx, [[17, 33], [25, 30.5], [36.5, 34], [36, 41.8], [23, 43.2], [16, 39.5]], ARMOR.red);
+    ellipse(ctx, 27.5, 36.7, 3.1, 3.1, ARMOR.gold);
+    ellipse(ctx, 27.5, 36.7, 1.8, 1.8, ARMOR.cyan, ARMOR.white, 0.65);
+    drawSideHelmet(ctx, 16, 36.5 + pose.headBob * 0.45, 7.5, 6.5, variant);
+    return;
+  }
+  const tailRoot: [number, number] = [bx - brx + 2.5, by - 2];
+  if (pose.tail === "down") {
+    armoredTail(ctx, tailRoot, [tailRoot[0] - 6, tailRoot[1] + 7], [tailRoot[0] - 10, 41]);
+  } else if (pose.tail === "flick") {
+    armoredTail(ctx, tailRoot, [tailRoot[0] - 9, tailRoot[1] - 6], [tailRoot[0] - 9.5, 15]);
+  } else {
+    armoredTail(ctx, tailRoot, [tailRoot[0] - 8.5, tailRoot[1] - 9], [tailRoot[0] - 2.5, 12.5]);
+  }
+  const left = bx - brx * 0.7;
+  const right = bx + brx * 0.82;
+  const top = by - bry * 0.72;
+  const bottom = Math.min(43, by + bry * 0.72);
+  polygon(ctx, [[left, top + 1], [bx - 2, top - 1.4], [right - 1, top], [right + 1, by], [right - 1.5, bottom], [left + 1, bottom]], ARMOR.red);
+  polygon(ctx, [[bx - 1, top], [right - 1.4, top + 0.7], [right - 0.2, by + 3.2], [bx + 0.8, by + 2.4]], ARMOR.redLight);
+  polygon(ctx, [[right - 2, top - 1.2], [right + 1.7, top + 0.5], [right + 0.5, top + 4], [right - 3, top + 2.7]], ARMOR.gold);
+  ellipse(ctx, bx + 3.2, by, 2.9, 2.9, ARMOR.gold);
+  ellipse(ctx, bx + 3.2, by, 1.7, 1.7, ARMOR.cyan, ARMOR.white, 0.6);
+  armorLine(ctx, [[left + 1.5, bottom - 1], [right - 1.6, bottom - 1]], ARMOR.gold, 1.2);
+  if (!["air", "stretch"].includes(pose.body)) {
+    polygon(ctx, [[bx - 6, 40.4], [bx - 1.8, 40.4], [bx - 1.2, 44], [bx - 6.2, 44]], ARMOR.red);
+    polygon(ctx, [[bx + 4, 40.3], [bx + 8.4, 40.3], [bx + 8.8, 44], [bx + 3.7, 44]], ARMOR.red);
+  }
+  drawSideHelmet(ctx, hx, hy, hrx, hry, variant);
+}
+
+function drawBackArmor(ctx: CanvasRenderingContext2D, pose: PoseSpec): void {
+  const sway = pose.body === "climb" ? Math.sin(pose.legPhase * Math.PI * 2) * 1.4 : 0;
+  const hx = 24 + sway;
+  const hy = (pose.body === "climb" ? 14.5 : 15.5) + pose.headBob;
+  const by = pose.body === "climb" ? 31 : 35.5;
+  if (pose.body === "climb") {
+    armoredTail(ctx, [24 + sway, 38], [31 + sway, 34], [30 + sway, 21]);
+  } else {
+    armoredTail(ctx, [28, 39], [37.5, 37], [36.5, 23]);
+  }
+  polygon(ctx, [[hx - 8.5, hy - 6.5], [hx - 5.8, hy - 9.2], [hx + 5.8, hy - 9.2], [hx + 8.5, hy - 6.5], [hx + 7.4, hy + 6.8], [hx - 7.4, hy + 6.8]], ARMOR.red);
+  polygon(ctx, [[hx - 6.4, hy - 7.2], [hx + 6.4, hy - 7.2], [hx + 4.8, hy - 4.5], [hx - 4.8, hy - 4.5]], ARMOR.gold);
+  polygon(ctx, [[hx - 7.7, by - 6], [hx - 4.5, by - 8.2], [hx + 4.5, by - 8.2], [hx + 7.7, by - 6], [hx + 6.8, by + 7], [hx - 6.8, by + 7]], ARMOR.red);
+  armorLine(ctx, [[hx, by - 6.5], [hx, by + 6]], ARMOR.gold, 2.2);
+  polygon(ctx, [[hx - 9, by - 5.8], [hx - 6.2, by - 8], [hx - 4.5, by - 4.7], [hx - 7.4, by - 2.9]], ARMOR.gold);
+  polygon(ctx, [[hx + 9, by - 5.8], [hx + 6.2, by - 8], [hx + 4.5, by - 4.7], [hx + 7.4, by - 2.9]], ARMOR.gold);
+}
+
+export function renderIronManCatCostume(
+  base: HTMLCanvasElement,
+  pose: PoseSpec,
+  variant: ArmorVariant,
+): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = base.width;
+  canvas.height = base.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return base;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(base, 0, 0);
+  ctx.save();
+  const scale = canvas.width / DESIGN_SIZE;
+  ctx.scale(scale, scale);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  if (pose.view === "side") drawSideArmor(ctx, pose, variant);
+  else if (pose.view === "back") drawBackArmor(ctx, pose);
+  else drawFrontArmor(ctx, pose, variant);
+  ctx.restore();
+  return canvas;
+}
+
+export function composeCostumeSprite(
+  base: HTMLCanvasElement,
+  pose: PoseSpec,
+): HTMLCanvasElement {
+  const view: CatView = pose.view;
+  const viewLayers =
+    activeViews.get(view) ??
+    (view === "threeQuarter" ? activeViews.get("front") : undefined) ??
+    activeViews.get("all");
+  if (!viewLayers) return base;
+  const variant = variantAt(performance.now(), viewLayers);
+  const layer = viewLayers.get(variant) ?? viewLayers.get("base");
+  if (!layer) return base;
+  let byView = composites.get(base);
+  if (!byView) {
+    byView = new Map();
+    composites.set(base, byView);
+  }
+  const cacheKey = `${view}:${variant}`;
+  const cached = byView.get(cacheKey);
+  if (cached) return cached;
+
+  if (activeCostumeId === IRON_MAN_CAT_ID) {
+    const armored = renderIronManCatCostume(base, pose, variant);
+    byView.set(cacheKey, armored);
+    return armored;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = base.width;
+  canvas.height = base.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return base;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(base, 0, 0);
+  const width = canvas.width * layer.scale;
+  const height = canvas.height * layer.scale;
+  const x = (canvas.width - width) / 2 + layer.offsetX;
+  const y = (canvas.height - height) / 2 + layer.offsetY;
+  ctx.globalAlpha = layer.opacity;
+  ctx.drawImage(layer.image, x, y, width, height);
+  byView.set(cacheKey, canvas);
+  return canvas;
+}

@@ -1,0 +1,111 @@
+[package]
+name = "pixel-cat-companion"
+version = "0.1.9"
+description = "A tiny pixel-art black cat that lives on your Windows desktop."
+authors = ["Spandan"]
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# Native file pickers for the Quick Tools conversions.
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ---- Quick Tools conversions --------------------------------------------
+# Only the codecs we actually convert between, to keep the binary small.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+flate2 = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
+semver = "1"
+
+# ---- Spreadsheet tools ---------------------------------------------------
+# Pure Rust, no Excel/Office required. calamine reads (xlsx/xlsm/xls/ods),
+# rust_xlsxwriter writes, csv handles delimited text. Default features are off:
+# we deliberately do NOT pull in date/chrono handling or a formula engine Ã¢â‚¬â€
+# formulas are read as their last-cached value and written back as text, never
+# evaluated, and macros in .xlsm are never executed.
+calamine = { version = "0.26", default-features = false }
+rust_xlsxwriter = { version = "0.79", default-features = false }
+csv = "1"
+# PDF rasterising. Binds to pdfium.dll at RUNTIME (not linked), so a missing
+# library degrades to "PDF -> images unavailable" instead of failing to start.
+pdfium-render = "0.8"
+# Offline licence-key verification (public key embedded; private key never ships).
+ed25519-dalek = "2"
+base64 = "0.22"
+
+# ---- Gmail + Google Calendar connectors ---------------------------------
+# Gmail: IMAP over TLS with the user's app password (no OAuth, no verification).
+# We poll a couple of times a minute rather than holding an IDLE connection, to
+# keep the background footprint tiny and the code robust.
+imap = "2.4"
+native-tls = "0.2"
+# Calendar: a plain HTTPS GET of the user's PRIVATE .ics address, parsed locally.
+ureq = "2"
+# New Dodo licences are stored in the operating system credential vault
+# (Windows Credential Manager / macOS Keychain), never in settings.json.
+# The backend features are NOT optional extras: keyring 3 falls back to an
+# in-memory *mock* store when no platform backend is selected
+# (`#[cfg(all(target_os = "windows", not(feature = "windows-native")))] pub use
+# mock as default;`), and the mock "provides no persistence". Without these,
+# every activation is forgotten the moment the app exits. Both deps are
+# target-gated inside keyring, so neither is pulled on the wrong platform.
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
+# Stable random installation identity stored beside the activation in the OS
+# credential vault. It is never derived from hardware identifiers.
+uuid = { version = "1", features = ["v4"] }
+
+# ---- macOS ---------------------------------------------------------------
+# Deliberately ONE crate. Monitors, click-through, always-on-top, all-Spaces
+# visibility, tray, autostart and deep links all come from Tauri's existing
+# cross-platform APIs, so the only thing needing native calls is the handful of
+# Quartz queries below (cursor, idle, event counters, window list).
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+core-foundation = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+# Reads ONLY the microphone consent-store keys (capture on/off), never audio.
+winreg = "0.52"
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Shell",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Dwm",
+  "Win32_UI_HiDpi",
+  "Win32_System_Threading",
+  "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_StationsAndDesktops",
+  "Win32_System_SystemInformation",
+  "Media_Control",
+  "Foundation",
+  "Foundation_Collections",
+] }
+
+# Small, fast release binaries (low memory footprint for a background pet).
+[profile.release]
+opt-level = "s"
+# LTO + codegen-units=1 minimise binary size but spike rustc's RAM on the huge
+# `windows` crate; with C: full the pagefile can't grow to cover it and rustc
+# crashes. Split codegen and drop LTO to keep peak memory low. Restore both once
+# there is disk headroom for a bigger pagefile.
+lto = false
+codegen-units = 16
+strip = true
+panic = "abort"

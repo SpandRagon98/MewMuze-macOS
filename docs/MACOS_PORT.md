@@ -1,0 +1,272 @@
+# MewMuze Pro — macOS port
+
+This tree is an independent duplicate of the Windows Pro source, taken at
+Windows commit `118c1612` (version 0.1.9) and verified byte-identical at the
+moment of copying. The Windows tree at `D:\MewMuze\MewMuze-Pro` is the
+production source and is never modified from here.
+
+Everything below describes **this** tree only.
+
+---
+
+## 1. Compatibility audit
+
+Every platform-touching module, classified. "Already shared" means the code was
+already written against a cross-platform API and needed nothing.
+
+### Platform-independent (no work needed)
+
+The whole of `src/` — the React frontend, the animation system, the behaviour
+FSM, physics, mochi mesh, appearance, costume composition, Work Mode, Quick
+Tools, Photo Mode, reminders, Pomodoro, Gmail/Calendar parsing, the Clipboard
+Assistant's logic, the calculator/converters, settings sanitising, licensing
+policy — is plain TypeScript with no platform knowledge. It is not touched by
+this port and the same 481 tests cover it on both platforms.
+
+On the Rust side, `calendar.rs`, `convert.rs` (except the library filename),
+`costume.rs`, `dodo_license.rs`, `gmail.rs`, `license.rs`, `pdf_write.rs`,
+`settings.rs`, `sheets.rs`, `tray.rs` and `trial.rs` carry no platform
+conditionals at all.
+
+### Windows-only, with a macOS equivalent already present before this port
+
+| Concern | Windows | macOS |
+| --- | --- | --- |
+| Cursor position | `GetCursorPos` | `CGEvent::location` (top-left origin, no Accessibility permission) |
+| User idle | `GetLastInputInfo` | `CGEventSource::seconds_since_last_event_type`, smallest across mouse/key/scroll |
+| Keyboard activity | held-key scan | `CGEventSource::counter_for_event_type(KeyDown)` — a rate, not keystrokes |
+| Scroll | raw input | Quartz scroll counter (magnitude only, no direction) |
+| Active window | `GetForegroundWindow` | `CGWindowListCopyWindowInfo`, front layer-0 window |
+| Window enumeration | `EnumWindows` | `CGWindowListCopyWindowInfo`, own PID skipped by pid not title |
+| Full-screen detection | class + monitor-rect match | frontmost layer-0 window covering a whole display |
+| Microphone in use | consent-store registry keys | CoreAudio `kAudioDevicePropertyDeviceIsRunningSomewhere` — device state, never audio |
+| Clipboard | `WM_CLIPBOARDUPDATE` listener | `NSPasteboard.changeCount` poll (700 ms) |
+| Open a link | `ShellExecuteW` | `open(1)` |
+| Credential storage | Credential Manager | Keychain (`keyring` crate, `apple-native` feature) |
+| Overlay geometry | virtual-screen metrics | union of Tauri's monitor rects |
+| Spaces / always on top | `WS_EX_TOPMOST` | `set_visible_on_all_workspaces` + `set_always_on_top` |
+| DPI | per-monitor-aware v2 | AppKit backing scale, nothing to call |
+| Dock icon suppression | `skipTaskbar` | `LSUIElement` in `Info.plist` |
+| Tray | Tauri tray | Tauri tray, appears in the menu bar |
+| Launch at login | registry Run | `tauri-plugin-autostart` LaunchAgent |
+| `mewmuze://` | deep-link plugin | deep-link plugin, `CFBundleURLTypes` |
+| `.mewcostume` | `fileAssociations` | `fileAssociations`, `CFBundleDocumentTypes` |
+| App data location | `%APPDATA%\com.spandan.pixelcat` | `~/Library/Application Support/com.spandan.pixelcat` |
+
+### Gaps this port closed
+
+| # | Gap | Fix |
+| --- | --- | --- |
+| 1 | `get_monitors` reported the work area as the **full display bounds**, so the cat walked under the menu bar and behind the Dock | Derive the visible frame from the window server's own chrome windows |
+| 2 | `pdfium_path` looked for `libpdfium.so` on macOS | `.dylib` on macOS, `.so` only on Linux |
+| 3 | `fetch-pdfium.mjs` downloaded `pdfium-mac-x64` and saved it as `.so` | `pdfium-mac-univ` saved as `libpdfium.dylib` |
+| 4 | `bundle.resources` declared `lib/pdfium.dll` for every platform, which fails a macOS build outright | Moved into `tauri.windows.conf.json` / `tauri.macos.conf.json` |
+| 5 | No `icon.icns` | Generated and added to the icon list |
+| 6 | The updater pointed macOS at the **Windows** manifest | `tauri.macos.conf.json` → `/updates/macos/latest.json` |
+| 7 | Photo Mode's `photo_capture_screen` was Windows-only | Quartz capture, all displays composited, Retina backing pixels |
+| 8 | Three error strings said "available on Windows" inside a macOS build | Reworded |
+| 9 | No macOS CI; the macOS half of the codebase was never compiled anywhere | `.github/workflows/macos.yml`, both architectures |
+
+---
+
+## 2. How the work area is derived (gap 1, the interesting one)
+
+The canonical source is `NSScreen.visibleFrame`, which needs AppKit. Reaching
+AppKit from here means either a new `objc2` dependency or hand-declared
+`objc_msgSend` externs — and `NSRect` comes back through `objc_msgSend_stret`
+on x86_64 but in registers on arm64. A hand-rolled bridge is precisely the kind
+of code that works on Apple Silicon and corrupts the stack on Intel, which is
+the one class of bug this project cannot test for locally.
+
+The window server already publishes the menu bar and the Dock as ordinary
+windows above layer 0, and `window_detection.rs` was reading that list anyway.
+`shell_furniture()` picks out windows owned by `Dock` and `Window Server`;
+`visible_frame()` subtracts each one from the edge it actually occupies, and
+only when it spans at least half that edge and is thin relative to the display.
+
+Consequences worth knowing:
+
+- An auto-hidden Dock is a few pixels or parked off-screen, so it takes
+  essentially nothing off the work area — which is the correct behaviour.
+- A Dock on the left or right shortens the walkable width, not the height.
+- Anything unrecognised leaves the area untouched, so the failure mode is the
+  old behaviour rather than a shrinking box the cat gets trapped in.
+- Reading `kCGWindowOwnerName` and bounds needs **no** Screen Recording
+  permission. Only window *titles* do, and none are read.
+
+This wants confirming on a real Mac (see the QA checklist): a Dock on each of
+the three edges, auto-hide on and off, and a second display.
+
+---
+
+## 3. Licensing
+
+Unchanged in architecture, deliberately. `dodo_license.rs` and `trial.rs` store
+the activation record and the trial anchor through the `keyring` crate, whose
+`apple-native` feature is already enabled in `Cargo.toml`. On macOS that is the
+login Keychain; no licence secret is ever written to `settings.json`, on either
+platform.
+
+The bundle identifier stays `com.spandan.pixelcat` so the product identity, the
+Keychain service name and the entitlement all match the Windows build. A macOS
+customer activates once, exactly as on Windows.
+
+No provider API key ships in the binary; activation goes through the same
+server-side flow.
+
+---
+
+## 4. Update channel
+
+Windows and macOS are kept apart on purpose:
+
+```
+Windows  https://mewmuze.com/updates/latest.json         (base config)
+macOS    https://mewmuze.com/updates/macos/latest.json   (tauri.macos.conf.json)
+```
+
+The macOS manifest does not exist yet — it must be published before the macOS
+updater is switched on, or macOS clients will poll a 404 forever. The signing
+key pair is shared (the `pubkey` in the base config), so `.keys/updater.key`
+signs both; that private key is **not** in this tree and never should be.
+
+---
+
+## 5. What cannot be verified from Windows
+
+This machine has no Apple hardware, no Apple SDK and no macOS toolchain. The
+following are therefore **unverified** here and are the reason the CI workflow
+exists:
+
+- Everything behind `#[cfg(target_os = "macos")]`. A Windows `cargo check`
+  compiles none of it. What has been checked locally is that every edited file
+  **parses** (`rustfmt` parses all branches regardless of `cfg`).
+- The `core-graphics` API surface used by the new code (`CGDisplay::image`,
+  `CGImage::bytes_per_row/data`, `kCGWindowOwnerName`).
+- Bundling, `.app` layout, `.dmg` creation, `lipo`, code signing.
+- Any runtime behaviour at all.
+
+Do not treat a green Windows check as evidence about macOS.
+
+---
+
+## 6. Real-Mac QA checklist
+
+Required before this can be called production-ready. Run on **both** an Apple
+Silicon and an Intel Mac, and on macOS 12 and the current release.
+
+### Overlay and rendering
+- [ ] Overlay is fully transparent; no window frame, shadow or title bar.
+- [ ] No Dock icon and no app-switcher entry (`LSUIElement`).
+- [ ] Cat is crisp on a Retina display — pixel art, no bilinear smear.
+- [ ] Cat is crisp on a non-Retina external display attached to a Retina Mac.
+- [ ] Dragging a window under the cat does not leave trails or tearing.
+
+### Movement and boundaries
+- [ ] Cat walks along the bottom of the **visible frame**, not under the Dock.
+- [ ] Cat never walks under the menu bar.
+- [ ] Dock on the left, then the right: walkable area narrows correctly.
+- [ ] Dock auto-hide on: cat uses the full height, and does not jitter as the
+      Dock shows and hides.
+- [ ] Two displays with different scale factors: cat crosses between them and
+      stays the right size on each.
+- [ ] Display unplugged while the cat is on it: the cat returns to a valid spot.
+
+### Interaction
+- [ ] Eye and head tracking follow the pointer.
+- [ ] Petting works and purring triggers.
+- [ ] Mochi drag/stretch: grab, stretch, release, land.
+- [ ] Cat climbs and sits on real application windows.
+- [ ] Click-through: clicking anywhere except the cat reaches the app beneath.
+- [ ] Right-click menu opens and every entry works.
+
+### Spaces and full screen
+- [ ] Cat follows the user across Spaces.
+- [ ] A true full-screen app (a full-screen video, Keynote presenting) makes the
+      cat retreat and the overlay hide completely.
+- [ ] Leaving full screen returns the cat to its previous position naturally.
+- [ ] Mission Control does not leave the overlay stuck visible.
+
+### Features
+- [ ] Settings panel opens, every control applies, and settings survive a quit.
+- [ ] Appearance Studio: species, coat, pattern, colours, stroke, accessories.
+- [ ] Costume install from a `.mewcostume` file; double-clicking one opens MewMuze.
+- [ ] `mewmuze://` link opens the app.
+- [ ] Clipboard Assistant: copy text, badge appears, panel actions work.
+- [ ] Work Mode: strike, panel, PDF tools, spreadsheet tools.
+- [ ] Calc & Time: calculator, unit converter, time zones.
+- [ ] Photo Mode: preview, all nine poses, Cat Only PNG has clean alpha edges.
+- [ ] Photo Mode desktop capture prompts for **Screen Recording** the first
+      time, and produces a real screenshot after the permission is granted.
+- [ ] Photo Mode "Copy Image" pastes into Preview/Messages.
+- [ ] Photo Mode "Open folder" reveals the file in Finder.
+- [ ] Reminders, Focus mode and Pomodoro fire on time.
+- [ ] Gmail connector fetches with an app password.
+- [ ] Calendar connector reads a private `.ics` URL.
+- [ ] Music reaction: cat dances while audio plays.
+- [ ] Microphone reaction: cat reacts when another app opens the mic, and macOS
+      does **not** show the purple mic indicator for MewMuze itself.
+- [ ] Menu-bar (tray) icon: menu opens, Settings and Quit work.
+- [ ] Launch at login: enable, reboot, cat returns.
+
+### Lifecycle and resources
+- [ ] Idle CPU with the cat visible and no interaction (target: comparable to
+      Windows, low single-digit %).
+- [ ] Memory after an hour idle — no growth.
+- [ ] Battery: no measurable drain difference when the cat is off.
+- [ ] Machine sleep and wake: cat resumes without teleporting or freezing.
+- [ ] Screen lock: overlay hides and returns.
+
+### Licensing
+- [ ] Fresh install: trial starts, 14-day countdown correct.
+- [ ] Activate a Pro key: succeeds and the record lands in the Keychain.
+- [ ] Quit and relaunch: still activated, no prompt.
+- [ ] Reboot: still activated.
+- [ ] Install a newer build over the top: still activated, settings intact.
+- [ ] Deactivate: releases the seat.
+- [ ] Uninstall (drag to Trash): no login item, no daemon left running.
+
+---
+
+## 7. Signing and notarisation — not done, and why
+
+The builds this repository produces are **unsigned**. Gatekeeper will refuse
+them on another Mac until the user right-clicks → Open.
+
+To ship commercially, the following are required and none of them exist here:
+
+| Needed | What it is |
+| --- | --- |
+| Apple Developer Program membership | $99/year, individual or organisation |
+| `Developer ID Application` certificate | Issued from the developer portal; installed in the build machine's Keychain |
+| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Name (TEAMID)` |
+| `APPLE_ID` | Apple ID email used for notarisation |
+| `APPLE_PASSWORD` | An **app-specific** password, never the account password |
+| `APPLE_TEAM_ID` | The 10-character team identifier |
+
+Hardened Runtime is already configured (`entitlements.plist`, with `allow-jit`
+for WKWebView, and network-client for the connectors and the updater). Once the
+credentials exist, `SIGN=1 NOTARIZE=1 ./scripts/build-macos.sh` signs, notarises
+and staples; in CI they belong in repository **secrets**, never in the tree.
+
+Nothing in this repository contains a certificate, private key, password or
+App Store Connect credential, and nothing should ever be added.
+
+---
+
+## 8. Known macOS limitations
+
+- **Scroll direction** is not available permission-free on macOS; the scroll
+  reaction uses magnitude only, so the cat reacts to scrolling but does not look
+  up versus down.
+- **Held keys** are not readable without Accessibility; the typing reaction is
+  driven by a keystroke *rate* instead, which drives the same detector.
+- **Music detection** is "is any audio playing", not "is music playing" — a
+  video call counts. macOS exposes no permission-free per-session playback API.
+- **Session-lock detection** returns false; the Windows path uses a desktop
+  handle test with no macOS analogue in use.
+- **Clipboard** is polled at 700 ms rather than event-driven; `NSPasteboard`
+  offers only `changeCount`.
+- **Screen Recording** permission is required for Photo Mode's desktop capture
+  (and only for that). Until granted, macOS returns the desktop picture with no
+  windows in it.

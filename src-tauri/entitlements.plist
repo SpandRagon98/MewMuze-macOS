@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      MewMuze is a local desktop pet. It needs no sandbox exceptions beyond
+      outbound network access, which is used ONLY by the optional Gmail (IMAP)
+      and Calendar (.ics) connectors the user explicitly configures, and by the
+      updater. Nothing else leaves the machine.
+
+      Deliberately NOT requested:
+        - com.apple.security.device.audio-input  (mic ACTIVITY is read from
+          CoreAudio device state; audio is never opened, so no mic permission
+          and no purple menu-bar indicator)
+        - camera, contacts, calendars, photos, location
+        - file access beyond the user-chosen .mewcostume package
+    -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Hardened Runtime is required for notarisation. JIT is needed by the
+         WKWebView JavaScript engine that renders the cat. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+</dict>
+</plist>

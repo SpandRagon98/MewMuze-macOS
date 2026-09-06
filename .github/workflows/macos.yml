@@ -1,0 +1,241 @@
+name: macOS
+
+# The macOS port cannot be validated on a Windows machine: Apple's SDK, linker,
+# codesign and hdiutil are macOS-only, and a `cargo check` for a Windows target
+# never compiles a single line behind `#[cfg(target_os = "macos")]`. This
+# workflow is therefore the ONLY place the macOS half of the codebase is
+# actually compiled, so it deliberately builds on both architectures rather
+# than assuming one implies the other.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # A desktop pet is not worth a slow CI; fail fast on a real error instead.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The shared frontend/core. Platform-independent by design, so it runs once
+  # rather than once per architecture.
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend (typecheck, lint, tests)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # The Rust/Tauri half, on both architectures.
+  #
+  #   macos-14  -> Apple Silicon (arm64) runner
+  #   macos-13  -> Intel (x86_64) runner
+  #
+  # GitHub's macos-13 is the last Intel image; if it is retired, drop that
+  # matrix entry and cross-build x86_64 from the arm64 runner instead of
+  # silently losing Intel coverage.
+  # ---------------------------------------------------------------------------
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One architecture failing must not cancel the other: knowing whether a
+      # break is arch-specific is the whole point of this matrix.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple Silicon (arm64)
+            runner: macos-14
+            target: aarch64-apple-darwin
+            arch: arm64
+          - name: Intel (x86_64)
+            runner: macos-13
+            target: x86_64-apple-darwin
+            arch: x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ matrix.runner }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ matrix.runner }}-cargo-
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Fetch PDFium (universal dylib)
+        # A declared bundle resource must exist BEFORE the Tauri build script
+        # runs, so this is a build prerequisite rather than an optional extra.
+        run: npm run fetch:pdfium
+
+      - name: Verify the PDFium library is a real Mach-O
+        run: |
+          set -euo pipefail
+          test -f src-tauri/lib/libpdfium.dylib
+          file src-tauri/lib/libpdfium.dylib
+          # The app is shipped universal, so the library must carry both slices.
+          lipo -info src-tauri/lib/libpdfium.dylib
+
+      - name: Rust format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+        continue-on-error: true
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Build .app and .dmg
+        # Unsigned/ad-hoc. Signing and notarisation need Apple credentials that
+        # deliberately do not exist in this repository; see docs/MACOS_PORT.md.
+        run: npm run tauri build -- --target ${{ matrix.target }}
+
+      - name: Describe the built binary
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app"
+          test -d "$APP"
+          echo "--- architecture ---"
+          lipo -info "$APP/Contents/MacOS/MewMuze"
+          echo "--- bundle contents ---"
+          find "$APP" -maxdepth 3 -not -path '*/Frameworks/*' | head -40
+          echo "--- Info.plist keys that matter ---"
+          /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
+          echo "--- signature (expected: adhoc or none) ---"
+          codesign -dv --verbose=2 "$APP" 2>&1 || true
+          echo "--- app size ---"
+          du -sh "$APP"
+
+      - name: Confirm the bundled PDFium travelled with the app
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app"
+          # The Rust side looks for it beside the exe or in Resources; failing
+          # this check means PDF -> images silently degrades in the shipped app.
+          find "$APP" -name 'libpdfium.dylib' -print | grep -q . \
+            || { echo "libpdfium.dylib is missing from the bundle"; exit 1; }
+
+      - name: Upload .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: MewMuze-${{ matrix.arch }}-app
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app
+          if-no-files-found: error
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: MewMuze-${{ matrix.arch }}-dmg
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # One app that runs natively on both architectures. This is what customers
+  # download, so it is built from the same source in the same run rather than
+  # stitched together afterwards from the two artifacts above.
+  # ---------------------------------------------------------------------------
+  universal:
+    name: Universal (arm64 + x86_64)
+    runs-on: macos-14
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust with both Apple targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: macos-14-universal-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-14-universal-
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Fetch PDFium (universal dylib)
+        run: npm run fetch:pdfium
+
+      - name: Build universal .app and .dmg
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      - name: Verify BOTH slices are present
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/MewMuze.app"
+          test -d "$APP"
+          INFO=$(lipo -info "$APP/Contents/MacOS/MewMuze")
+          echo "$INFO"
+          # A "universal" build missing a slice would install fine and then fail
+          # to launch for half the customers, so this is asserted, not eyeballed.
+          echo "$INFO" | grep -q 'arm64'  || { echo "missing arm64 slice";  exit 1; }
+          echo "$INFO" | grep -q 'x86_64' || { echo "missing x86_64 slice"; exit 1; }
+          du -sh "$APP"
+
+      - name: Upload universal .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: MewMuze-universal-app
+          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/MewMuze.app
+          if-no-files-found: error
+
+      - name: Upload universal .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: MewMuze-universal-dmg
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
