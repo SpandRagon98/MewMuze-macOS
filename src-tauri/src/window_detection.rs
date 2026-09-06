@@ -201,6 +201,25 @@ mod imp_mac {
         CGDisplay,
     };
 
+    /// A nested dictionary value, viewed with the same typed wrapper used for
+    /// the top-level entries.
+    ///
+    /// `CFType::downcast` cannot produce a `CFDictionary<CFString, CFType>`:
+    /// core-foundation implements `ConcreteCFType` only for the untyped
+    /// `CFDictionary<*const c_void, *const c_void>`. Checking the type id and
+    /// re-wrapping is that same operation without the bound, and it still
+    /// refuses anything that is not actually a dictionary.
+    fn sub_dict(
+        dict: &CFDictionary<CFString, CFType>,
+        key: &str,
+    ) -> Option<CFDictionary<CFString, CFType>> {
+        let value = dict.find(&CFString::new(key))?;
+        if value.type_of() != CFDictionary::<CFString, CFType>::type_id() {
+            return None;
+        }
+        Some(unsafe { CFDictionary::wrap_under_get_rule(value.as_CFTypeRef() as _) })
+    }
+
     fn num(dict: &CFDictionary<CFString, CFType>, key: &str) -> Option<f64> {
         dict.find(&CFString::new(key))
             .and_then(|v| v.downcast::<CFNumber>())
@@ -213,7 +232,7 @@ mod imp_mac {
 
         let Some(list) = CGDisplay::window_list_info(
             kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-            kCGNullWindowID,
+            Some(kCGNullWindowID),
         ) else {
             return out;
         };
@@ -233,10 +252,7 @@ mod imp_mac {
                 continue;
             }
             // Geometry lives in a NESTED kCGWindowBounds dictionary.
-            let Some(bounds) = dict
-                .find(&CFString::new("kCGWindowBounds"))
-                .and_then(|v| v.downcast::<CFDictionary<CFString, CFType>>())
-            else {
+            let Some(bounds) = sub_dict(&dict, "kCGWindowBounds") else {
                 continue;
             };
             let (Some(x), Some(y), Some(w), Some(h)) = (
@@ -332,7 +348,7 @@ mod imp_mac {
         // Deliberately WITHOUT kCGWindowListExcludeDesktopElements: the menu
         // bar and the Dock are precisely the desktop elements that filter drops.
         let Some(list) =
-            CGDisplay::window_list_info(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+            CGDisplay::window_list_info(kCGWindowListOptionOnScreenOnly, Some(kCGNullWindowID))
         else {
             return out;
         };
@@ -355,10 +371,7 @@ mod imp_mac {
             if owner != "Dock" && owner != "Window Server" {
                 continue;
             }
-            let Some(bounds) = dict
-                .find(&CFString::new("kCGWindowBounds"))
-                .and_then(|v| v.downcast::<CFDictionary<CFString, CFType>>())
-            else {
+            let Some(bounds) = sub_dict(&dict, "kCGWindowBounds") else {
                 continue;
             };
             let (Some(x), Some(y), Some(w), Some(h)) = (

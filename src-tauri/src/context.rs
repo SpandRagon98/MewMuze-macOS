@@ -66,9 +66,11 @@ pub fn get_foreground_app() -> Option<String> {
         };
 
         let own_pid = std::process::id() as f64;
+        // core-graphics takes Option<CGWindowID> for the "relative to" window.
+        // kCGNullWindowID is the C API's "no reference window" sentinel.
         let list = CGDisplay::window_list_info(
             kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
-            kCGNullWindowID,
+            Some(kCGNullWindowID),
         )?;
         for item in list.iter() {
             let dict: CFDictionary<CFString, CFType> =
@@ -153,6 +155,7 @@ pub fn get_media_playing() -> bool {
         return crate::mic::coreaudio::output_running();
     }
     #[cfg(windows)]
+    #[allow(unreachable_code)]
     MEDIA_WATCHER.get_or_init(|| {
         std::thread::Builder::new()
             .name("media-session-poll".into())

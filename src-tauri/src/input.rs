@@ -43,12 +43,36 @@ pub fn get_keyboard_activity() -> u32 {
     0
 }
 
+/// The two Quartz event-source queries this file needs.
+///
+/// The `core-graphics` crate wraps `CGEventSource` for *creating* sources but
+/// binds neither counter query, so they are declared against the framework
+/// directly — the same approach `mic.rs` already takes for CoreAudio. Both are
+/// plain C functions taking and returning scalars, so unlike an ObjC
+/// `objc_msgSend` bridge there is no struct-return ABI difference between
+/// arm64 and x86_64 to get wrong.
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    /// Number of events of one type since login. A count, never contents.
+    fn CGEventSourceCounterForEventType(state: i32, event_type: u32) -> u32;
+    /// Seconds since the last event of one type. A timestamp, never contents.
+    fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+}
+
+/// kCGEventSourceStateHIDSystemState — the whole machine, all sessions.
+#[cfg(target_os = "macos")]
+const HID_SYSTEM_STATE: i32 = 1;
+
+/// kCGAnyInputEventType — every input event, whatever the kind.
+#[cfg(target_os = "macos")]
+const ANY_INPUT_EVENT: u32 = u32::MAX;
+
 /// System-wide count of one event type since login. Permission-free: it reads
 /// aggregate counters only, never event contents. Returns 0 if unavailable.
 #[cfg(target_os = "macos")]
 fn mac_event_count(kind: core_graphics::event::CGEventType) -> u32 {
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-    CGEventSource::counter_for_event_type(CGEventSourceStateID::HIDSystemState, kind) as u32
+    unsafe { CGEventSourceCounterForEventType(HID_SYSTEM_STATE, kind as u32) }
 }
 
 /// Milliseconds since Windows last received mouse or keyboard input.
@@ -75,29 +99,16 @@ pub fn get_user_idle_ms() -> u64 {
     }
     #[cfg(target_os = "macos")]
     {
-        use core_graphics::event::CGEventType;
-        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
-        // Seconds since the last event of each kind; the smallest wins. Quartz
-        // has no single "any input" bucket, so mouse and keyboard are polled
-        // separately — same privacy shape as GetLastInputInfo (a timestamp
-        // only, never what was typed or where the pointer went).
-        let kinds = [
-            CGEventType::MouseMoved,
-            CGEventType::KeyDown,
-            CGEventType::LeftMouseDown,
-            CGEventType::RightMouseDown,
-            CGEventType::ScrollWheel,
-        ];
-        let idle = kinds
-            .iter()
-            .map(|k| {
-                CGEventSource::seconds_since_last_event_type(
-                    CGEventSourceStateID::HIDSystemState,
-                    *k,
-                )
-            })
-            .fold(f64::MAX, f64::min);
+        // kCGAnyInputEventType is Quartz's own "any input" bucket, so this is a
+        // single query rather than a minimum over a hand-picked list of event
+        // kinds — and it also covers the ones such a list forgets (drags,
+        // modifier changes, tablet and trackpad gestures).
+        //
+        // Same privacy shape as GetLastInputInfo: a timestamp only, never what
+        // was typed or where the pointer went.
+        let idle = unsafe {
+            CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, ANY_INPUT_EVENT)
+        };
         if idle.is_finite() && idle >= 0.0 {
             return (idle * 1000.0) as u64;
         }
