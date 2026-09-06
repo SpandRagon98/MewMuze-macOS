@@ -1,0 +1,8 @@
+# Shell scripts MUST keep LF. A CRLF build-macos.sh checked out on a Mac fails
+# with "bad interpreter: /usr/bin/env bash^M", which reads as a missing shell
+# rather than a line-ending problem and wastes an afternoon.
+*.sh text eol=lf
+
+# The rest of the tree deliberately keeps whatever endings it has: normalising
+# it would rewrite every file and bury real changes in the diff.
+* -text

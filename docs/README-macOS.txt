@@ -1,92 +1,75 @@
-MewMuze for macOS
-=================
+MewMuze Pro for macOS
+=====================
 
-A tiny pixel-art cat that lives on your desktop. Fully local — no account,
-no tracking, and nothing leaves your Mac unless you connect Gmail or
-Calendar yourself.
-
-Requires macOS 10.15 (Catalina) or later. Runs natively on both Apple
-Silicon and Intel Macs.
+A tiny pixel-art cat that lives on your desktop.
 
 
-INSTALL
--------
-1. Open MewMuze-macOS.dmg
-2. Drag MewMuze onto the Applications folder shown beside it.
-3. Eject the disk image and launch MewMuze from Applications.
+INSTALLING
+----------
 
-MewMuze has no Dock icon by design — it is a menu-bar app, so the cat can
-live on your desktop without taking a Dock slot. Look for the cat icon in
-the menu bar at the top-right of your screen.
+1. Open MewMuze-Pro.dmg.
+2. Drag MewMuze into the Applications folder shown beside it.
+3. Eject the disk image and open MewMuze from Applications or Spotlight.
+
+MewMuze has no Dock icon by design — it lives on your desktop, and its
+controls are in the menu bar at the top of the screen and in the right-click
+menu on the cat itself.
+
+Nothing else is needed. There is no runtime to install.
+
+
+FIRST LAUNCH
+------------
 
 If macOS says the app "cannot be opened because the developer cannot be
-verified", this build is not yet notarised. Right-click (or Control-click)
-MewMuze in Applications, choose Open, then confirm. You only do this once.
+verified", this copy is not yet notarised by Apple. Right-click (or
+Control-click) MewMuze in Applications, choose Open, and confirm once. macOS
+remembers the choice.
 
 
 PERMISSIONS
 -----------
-MewMuze asks for as little as possible and keeps working if you decline.
 
-  Not requested at all:
-    Microphone, Camera, Contacts, Calendars, Photos, Location, and
-    Screen Recording.
+MewMuze asks for as little as possible, and only when you use the feature:
 
-  The cat detects that *some* app is using the microphone by reading the
-  audio device's on/off state — it never opens the microphone, so macOS
-  never shows the orange recording dot for MewMuze.
+  Screen Recording   Only for Photo Mode's "Desktop + MewMuze" capture. Every
+                     other part of the app, including the cat itself and the
+                     other two photo modes, works without it. Nothing is ever
+                     captured until you tick the warning and press the button.
 
-  Accessibility (optional, only if you want it):
-    Not required. Granting it would let the cat tell which DIRECTION you
-    are scrolling. Without it the cat still reacts to scrolling, it just
-    can't tell up from down. Nothing else changes.
+MewMuze deliberately does NOT request microphone, camera, contacts, calendar,
+photo or location access. The cat's reaction to microphone use is read from the
+audio device's own state — no audio is ever opened, which is why you will not
+see the orange microphone dot for MewMuze.
 
 
-USING IT
---------
-- Right-click the cat        : menu (Settings, Work Mode, Focus, and more)
-- Left-click and drag        : pick the cat up; it stretches like mochi
-- Hover and move the pointer : pet it
-- Drop it at a screen edge   : it peeks in from the side
-- Click the menu-bar icon    : same menu, plus Cat On/Off and Quit
+YOUR PRO LICENCE
+----------------
+
+Your activation is stored in the macOS Keychain, not in a file. It survives
+updates, restarts and reinstalls, and it is the same licence as the Windows
+version — activate once.
 
 
-UPGRADING
----------
-Drag the new MewMuze onto Applications and choose Replace. Your settings,
-position, costumes and licence key are preserved — they live in your
-Library folder, not inside the app.
+WHERE THINGS LIVE
+-----------------
+
+  Settings   ~/Library/Application Support/com.spandan.pixelcat/settings.json
+  Costumes   ~/Library/Application Support/com.spandan.pixelcat/costumes/
+  Licence    login Keychain, service "com.spandan.pixelcat"
+
+To remove MewMuze completely: quit it from the menu bar, drag it from
+Applications to the Trash, and delete the Application Support folder above.
 
 
-UNINSTALL
----------
-1. Quit MewMuze from the menu-bar icon.
-2. Drag /Applications/MewMuze.app to the Trash.
+REQUIREMENTS
+------------
 
-That is a complete uninstall. To also remove your saved settings and
-costumes, delete these two folders:
-
-  ~/Library/Application Support/com.spandan.pixelcat
-  ~/Library/Preferences/com.spandan.pixelcat.plist
-
-If you enabled "Start with login", removing the app also removes its login
-item; you can confirm under System Settings > General > Login Items.
+  macOS 10.15 Catalina or newer
+  Apple Silicon or Intel
 
 
-PRIVACY
+SUPPORT
 -------
-MewMuze reads only aggregate signals to decide which animation to play:
-how recently you typed (never what), whether some app is using the
-microphone (never the audio), and the name of the foreground app (never
-window titles or documents). Clipboard text stays on your Mac and is never
-written to disk.
 
-
-TROUBLESHOOTING
----------------
-Cat not visible?       Menu-bar icon > Cat On, or > Reset cat position.
-Cat in the way?        Menu-bar icon > Cat Off, or enable Peek in Settings.
-Cat on wrong display?  Menu-bar icon > Reset cat position.
-No menu-bar icon?      Relaunch from Applications; macOS hides menu-bar
-                       items when the bar is full — try widening it by
-                       quitting another menu-bar app.
+  https://mewmuze.com

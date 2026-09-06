@@ -38,6 +38,23 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# ---- macOS tree guard ----------------------------------------------------
+# This is the macOS port. release.ps1 publishes the WINDOWS installer: it
+# pushes to the Windows website repo and cuts a GitHub release whose assets
+# the Windows updater manifest points at. Running it from here would
+# overwrite the Windows download with whatever this tree happens to contain.
+#
+# macOS releases are built by scripts/build-macos.sh on a Mac (or by the
+# macOS CI workflow) and published to the separate macOS update channel
+# declared in src-tauri/tauri.macos.conf.json. See docs/MACOS_PORT.md.
+Write-Host ""
+Write-Host "release.ps1 is the WINDOWS release script and must not be run from the macOS tree." -ForegroundColor Red
+Write-Host "Windows releases are cut from the Windows Pro source folder." -ForegroundColor Yellow
+Write-Host "macOS releases: ./scripts/build-macos.sh on a Mac, or the macOS CI workflow." -ForegroundColor Yellow
+Write-Host ""
+exit 1
+# --------------------------------------------------------------------------
 # PowerShell 5.1 still negotiates TLS 1.0 by default, which api.github.com refuses.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $root = Split-Path -Parent $PSScriptRoot
