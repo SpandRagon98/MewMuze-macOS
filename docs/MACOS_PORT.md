@@ -33,8 +33,8 @@ conditionals at all.
 | Concern | Windows | macOS |
 | --- | --- | --- |
 | Cursor position | `GetCursorPos` | `CGEvent::location` (top-left origin, no Accessibility permission) |
-| User idle | `GetLastInputInfo` | `CGEventSource::seconds_since_last_event_type`, smallest across mouse/key/scroll |
-| Keyboard activity | held-key scan | `CGEventSource::counter_for_event_type(KeyDown)` — a rate, not keystrokes |
+| User idle | `GetLastInputInfo` | `CGEventSourceSecondsSinceLastEventType(kCGAnyInputEventType)` |
+| Keyboard activity | held-key scan | `CGEventSourceCounterForEventType(KeyDown)` — a rate, not keystrokes |
 | Scroll | raw input | Quartz scroll counter (magnitude only, no direction) |
 | Active window | `GetForegroundWindow` | `CGWindowListCopyWindowInfo`, front layer-0 window |
 | Window enumeration | `EnumWindows` | `CGWindowListCopyWindowInfo`, own PID skipped by pid not title |
@@ -132,6 +132,67 @@ signs both; that private key is **not** in this tree and never should be.
 
 ---
 
+## 4a. What macOS CI has actually proved
+
+Repository: `SpandRagon98/MewMuze-macOS` (private). Workflow:
+`.github/workflows/macos.yml`. First green run: **34032514890**.
+
+| Job | Runner | Result |
+| --- | --- | --- |
+| Frontend (typecheck, lint, tests, build) | macos-14 | 481 tests / 56 files pass |
+| Apple Silicon (arm64) | macos-14 | clippy, 56 Rust tests, .app + .dmg |
+| Intel (x86_64) | macos-15-intel | clippy, 56 Rust tests, .app + .dmg |
+| Universal | macos-14 | both slices asserted, .app + .dmg |
+
+Verified in the bundle, not assumed:
+
+- `Contents/MacOS/MewMuze` is a 2-slice fat binary (x86_64 + arm64) in the
+  universal build, and thin/correct in each single-architecture build.
+- `Contents/Resources/libpdfium.dylib` carries **both** slices in every build.
+  A universal app with a single-architecture PDFium would install fine and then
+  fail PDF tools on half the machines.
+- `Contents/Resources/icon.icns` is present.
+- `Info.plist`: `LSUIElement = true`, `CFBundleIdentifier = com.spandan.pixelcat`,
+  `mewmuze://` URL scheme, `.mewcostume` document type, min system 10.15.
+- `codesign` reports "code object is not signed at all" — expected, see §7.
+
+### Failures fixed to get there
+
+Three rounds. Every one was a real defect that no Windows check could reach.
+
+1. **`window_list_info` takes `Option<CGWindowID>`** in core-graphics 0.24, not
+   a bare id. Three call sites.
+2. **`CFType::downcast::<CFDictionary<CFString, CFType>>()` is not permitted.**
+   core-foundation implements `ConcreteCFType` only for the untyped
+   `CFDictionary<*const c_void, *const c_void>`. Added `sub_dict`, which checks
+   the type id and re-wraps — the same operation without the bound, still
+   rejecting anything that is not a dictionary.
+3. **`CGEventSource::counter_for_event_type` and
+   `seconds_since_last_event_type` do not exist.** The crate wraps
+   `CGEventSource` for creating sources but binds neither counter query. Both
+   are now declared against the CoreGraphics framework directly, as `mic.rs`
+   already does for CoreAudio. Plain C scalars, so no arm64/x86_64
+   struct-return ABI difference.
+4. **Idle detection** now asks `kCGAnyInputEventType`, Quartz's own any-input
+   bucket, rather than taking a minimum over five hand-picked event kinds that
+   omitted drags, modifier changes and trackpad gestures.
+5. **`MEDIA_WATCHER` and `OVERLAY_TITLE` were dead code on macOS** and are now
+   gated on `windows`. macOS reads playback from CoreAudio and skips its own
+   windows by PID rather than by title.
+6. **Packaging exited non-zero after succeeding.** With a `pubkey` in the
+   config and no private key, Tauri signs the updater artifact and fails —
+   after writing a perfectly good `.app` and `.dmg`. CI passes
+   `--config '{"bundle":{"createUpdaterArtifacts":false}}'` so a development
+   build stops demanding a key that deliberately is not in this repository.
+
+### Still only compile-verified
+
+Green CI means the macOS code compiles, links, packages and its unit tests
+pass. It says **nothing** about behaviour: no runner ever launched the app.
+Every runtime claim still belongs to the checklist in §6 — in particular the
+work-area derivation in §2, which is the part most likely to be wrong in a way
+only a real Dock can reveal.
+
 ## 5. What cannot be verified from Windows
 
 This machine has no Apple hardware, no Apple SDK and no macOS toolchain. The
@@ -139,8 +200,9 @@ following are therefore **unverified** here and are the reason the CI workflow
 exists:
 
 - Everything behind `#[cfg(target_os = "macos")]`. A Windows `cargo check`
-  compiles none of it. What has been checked locally is that every edited file
-  **parses** (`rustfmt` parses all branches regardless of `cfg`).
+  compiles none of it, and `rustfmt` only proves it parses. This is now covered
+  by macOS CI instead (§4a) — which is exactly how the six defects listed there
+  were found.
 - The `core-graphics` API surface used by the new code (`CGDisplay::image`,
   `CGImage::bytes_per_row/data`, `kCGWindowOwnerName`).
 - Bundling, `.app` layout, `.dmg` creation, `lipo`, code signing.
