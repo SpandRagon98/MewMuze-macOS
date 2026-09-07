@@ -193,6 +193,67 @@ Every runtime claim still belongs to the checklist in §6 — in particular the
 work-area derivation in §2, which is the part most likely to be wrong in a way
 only a real Dock can reveal.
 
+## 4b. Defects found by real-Mac QA
+
+CI proved the code compiles and packages. The first install on an actual Mac
+found three things it could never have caught.
+
+### The overlay was an opaque white sheet over every app
+
+`transparent: true` alone does nothing on macOS. Without `app.macOSPrivateApi`
+the `NSWindow` keeps an opaque backing and WKWebView paints its own, so a
+full-screen overlay renders as a white rectangle covering everything, with the
+cat drawn on it. The page CSS was already transparent; the window was not.
+
+Two things must agree or `tauri-build` refuses the build **in either
+direction**:
+
+- `app.macOSPrivateApi: true` in `tauri.conf.json`
+- the `macos-private-api` feature on the `tauri` dependency
+
+Both live in the SHARED config and the SHARED `[dependencies]` table, not in
+the macOS-only files. A target-specific `tauri` entry does not work: the check
+reads only `[dependencies]`. Both are inert on Windows, so agreeing everywhere
+is simpler than being clever.
+
+> **This uses private AppKit API.** Fine for direct download and for
+> notarisation, which does not scan for it. It does rule out the Mac App Store
+> for the macOS build.
+
+### The cat was drawn behind the Dock
+
+`set_always_on_top` maps to `NSFloatingWindowLevel` (3); the Dock is at 20.
+`raise_above_dock` in `overlay.rs` now sets level 21 — above the Dock, below
+the menu bar at 24, which a desktop pet must never cover. It must be called
+after `set_always_on_top`, which sets the level itself.
+
+This is the port's only Objective-C message. `setLevel:` takes an integer and
+returns nothing, so it has none of the struct-return ABI difference that keeps
+`NSScreen.visibleFrame` out of this codebase (see §2).
+
+### The Dock was never detected at all
+
+The real fault behind the symptom above. `visible_frame` required a strip to
+cover **half the display edge** before counting as chrome. The menu bar does.
+The Dock does not — it is centred and only as wide as its icons, so a six-icon
+Dock on a 1440pt display is under a third of the width. The Dock was therefore
+never recognised, the work area stayed the full display, and the cat's floor
+sat underneath the Dock.
+
+The threshold is now a tenth of the edge for the Dock and half for the menu
+bar. `window_detection.rs` carries 14 unit tests for this, run on both macOS
+runners: the narrow Dock that caused it, wide Dock, left and right Dock,
+auto-hide, off-screen parking, a second display with its own Dock, floating
+panels that must NOT count, and the collapse guards.
+
+### Still unverified
+
+The fixes above are compile-verified only. Whether the overlay is actually
+transparent, and whether the cat actually stands on the Dock rather than
+behind or under it, needs another pass on real hardware — §6.
+
+---
+
 ## 5. What cannot be verified from Windows
 
 This machine has no Apple hardware, no Apple SDK and no macOS toolchain. The
