@@ -342,10 +342,40 @@ fn position_window(win: &WebviewWindow) {
         // are first-class Tauri APIs on macOS, so this needs no objc.
         let _ = win.set_visible_on_all_workspaces(true);
         let _ = win.set_always_on_top(true);
+        // MUST come after set_always_on_top, which sets the level itself.
+        raise_above_dock(win);
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = win;
+    }
+}
+
+/// Put the overlay one level above the Dock.
+///
+/// Tauri's `set_always_on_top` maps to `NSFloatingWindowLevel` (3), which is
+/// BELOW the Dock at level 20 — so the cat was drawn behind the Dock however
+/// correct its position was. One level above the Dock puts it in front, and
+/// still below the menu bar at 24, which a desktop pet must never cover.
+///
+/// This is the one Objective-C message in the port. `NSScreen.visibleFrame` is
+/// still avoided (see window_detection.rs) because it returns an NSRect, and a
+/// struct return goes through `objc_msgSend_stret` on x86_64 but registers on
+/// arm64. `setLevel:` takes an integer and returns nothing, so it has none of
+/// that risk and behaves identically on both architectures.
+#[cfg(target_os = "macos")]
+fn raise_above_dock(win: &WebviewWindow) {
+    /// kCGDockWindowLevel.
+    const DOCK_LEVEL: isize = 20;
+    let Ok(ns_window) = win.ns_window() else {
+        return;
+    };
+    let window = ns_window as *mut objc2::runtime::AnyObject;
+    if window.is_null() {
+        return;
+    }
+    unsafe {
+        let _: () = objc2::msg_send![window, setLevel: DOCK_LEVEL + 1];
     }
 }
 

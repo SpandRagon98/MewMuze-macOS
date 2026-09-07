@@ -327,6 +327,10 @@ mod imp_mac {
         top: i32,
         right: i32,
         bottom: i32,
+        /// The Dock, as opposed to the menu bar. They need different rules:
+        /// the menu bar spans the whole display, the Dock is only as wide as
+        /// its icons.
+        is_dock: bool,
     }
 
     /// The menu bar and the Dock, read from the window server.
@@ -394,6 +398,7 @@ mod imp_mac {
                 top: y as i32,
                 right: (x + w) as i32,
                 bottom: (y + h) as i32,
+                is_dock: owner == "Dock",
             });
         }
         out
@@ -401,12 +406,12 @@ mod imp_mac {
 
     /// Shrink a display rect by whichever edges the chrome occupies.
     ///
-    /// Only chrome that spans most of an edge counts, and only the edge it is
-    /// actually against — so the Dock takes height off the bottom when it is at
-    /// the bottom and width off a side when it is on a side, and an auto-hidden
-    /// Dock (a 1-4px sliver, or parked off-screen) takes essentially nothing.
-    /// Anything unrecognised leaves the area alone, which degrades to the old
-    /// behaviour rather than trapping the cat in a shrinking box.
+    /// Chrome counts only when it is against an edge and thin relative to the
+    /// display, so the Dock takes height off the bottom when it is at the
+    /// bottom and width off a side when it is on a side. An auto-hidden Dock is
+    /// a sliver or parked off-screen and takes essentially nothing. Anything
+    /// unrecognised leaves the area alone, which degrades to the old behaviour
+    /// rather than trapping the cat in a shrinking box.
     fn visible_frame(
         left: i32,
         top: i32,
@@ -417,28 +422,42 @@ mod imp_mac {
         let (mut wl, mut wt, mut wr, mut wb) = (left, top, right, bottom);
         let width = (right - left).max(1);
         let height = (bottom - top).max(1);
-        // The Dock is centred and does not span the display, so requiring a
-        // full-width match would never fire. Half the edge is enough to tell a
-        // real strip from a stray panel.
-        let spans_h = |f: &Furniture| (f.right.min(right) - f.left.max(left)) * 2 >= width;
-        let spans_v = |f: &Furniture| (f.bottom.min(bottom) - f.top.max(top)) * 2 >= height;
 
         for f in furniture {
             // Ignore chrome belonging to a different display.
             if f.right <= left || f.left >= right || f.bottom <= top || f.top >= bottom {
                 continue;
             }
+            let across_h = (f.right.min(right) - f.left.max(left)).max(0);
+            let across_v = (f.bottom.min(bottom) - f.top.max(top)).max(0);
             let thickness_v = (f.bottom - f.top).max(0);
             let thickness_h = (f.right - f.left).max(0);
+
+            // How much of an edge a strip must cover to count as chrome.
+            //
+            // The menu bar spans the whole display. The DOCK does not: it is
+            // centred and only as wide as its icons, so on a 1440pt display a
+            // six-icon Dock is under 500pt. Demanding half the edge from it
+            // meant the Dock was never recognised, the work area stayed the
+            // full display, and the cat walked to the bottom of the screen and
+            // disappeared behind the Dock. A tenth of the edge still rejects
+            // stray panels without rejecting a small Dock.
+            let min_h = if f.is_dock { width / 10 } else { width / 2 };
+            let min_v = if f.is_dock { height / 10 } else { height / 2 };
+
             // A strip is only an inset if it is thin relative to the display;
             // a full-screen-sized element is something else entirely.
-            if spans_h(f) && thickness_v * 3 < height {
+            if across_h >= min_h && thickness_v * 3 < height {
                 if f.top <= top + 2 {
                     wt = wt.max(f.bottom.min(bottom)); // menu bar
-                } else if f.bottom >= bottom - 2 {
-                    wb = wb.min(f.top.max(top)); // Dock at the bottom
+                    continue;
                 }
-            } else if spans_v(f) && thickness_h * 3 < width {
+                if f.bottom >= bottom - 2 {
+                    wb = wb.min(f.top.max(top)); // Dock along the bottom
+                    continue;
+                }
+            }
+            if across_v >= min_v && thickness_h * 3 < width {
                 if f.left <= left + 2 {
                     wl = wl.max(f.right.min(right)); // Dock on the left
                 } else if f.right >= right - 2 {
@@ -453,6 +472,145 @@ mod imp_mac {
             return (left, top, right, bottom);
         }
         (wl, wt, wr, wb)
+    }
+
+
+    #[cfg(test)]
+    mod tests {
+        use super::{visible_frame, Furniture};
+
+        // A 1440x900 display at the origin, the shape of a MacBook screen in
+        // points. The Dock and menu bar sizes below are the real defaults.
+        const L: i32 = 0;
+        const T: i32 = 0;
+        const R: i32 = 1440;
+        const B: i32 = 900;
+
+        fn dock(left: i32, top: i32, right: i32, bottom: i32) -> Furniture {
+            Furniture { left, top, right, bottom, is_dock: true }
+        }
+        fn chrome(left: i32, top: i32, right: i32, bottom: i32) -> Furniture {
+            Furniture { left, top, right, bottom, is_dock: false }
+        }
+        fn menu_bar() -> Furniture {
+            chrome(L, T, R, 25)
+        }
+
+        #[test]
+        fn no_chrome_leaves_the_whole_display_walkable() {
+            assert_eq!(visible_frame(L, T, R, B, &[]), (L, T, R, B));
+        }
+
+        #[test]
+        fn the_menu_bar_lowers_the_ceiling() {
+            let (_, wt, _, _) = visible_frame(L, T, R, B, &[menu_bar()]);
+            assert_eq!(wt, 25);
+        }
+
+        #[test]
+        fn a_small_dock_still_raises_the_floor() {
+            // THE REGRESSION. A six-icon Dock is ~480pt wide on a 1440pt
+            // display — barely a third of the edge. The first implementation
+            // demanded half, so the Dock was never seen, the floor stayed at
+            // the bottom of the screen, and the cat walked behind it.
+            let d = dock(480, 820, 960, 900);
+            let (_, _, _, wb) = visible_frame(L, T, R, B, &[d]);
+            assert_eq!(wb, 820, "a narrow Dock must still raise the floor");
+        }
+
+        #[test]
+        fn a_wide_dock_raises_the_floor_too() {
+            let (_, _, _, wb) = visible_frame(L, T, R, B, &[dock(200, 810, 1240, 900)]);
+            assert_eq!(wb, 810);
+        }
+
+        #[test]
+        fn a_left_dock_narrows_the_width_not_the_height() {
+            let (wl, wt, wr, wb) = visible_frame(L, T, R, B, &[dock(0, 250, 80, 650)]);
+            assert_eq!(wl, 80);
+            assert_eq!((wt, wr, wb), (T, R, B), "a side Dock must not touch the floor");
+        }
+
+        #[test]
+        fn a_right_dock_narrows_the_width() {
+            let (wl, _, wr, _) = visible_frame(L, T, R, B, &[dock(1360, 250, 1440, 650)]);
+            assert_eq!(wr, 1360);
+            assert_eq!(wl, L);
+        }
+
+        #[test]
+        fn menu_bar_and_dock_together() {
+            let (wl, wt, wr, wb) =
+                visible_frame(L, T, R, B, &[menu_bar(), dock(480, 820, 960, 900)]);
+            assert_eq!((wl, wt, wr, wb), (0, 25, 1440, 820));
+        }
+
+        #[test]
+        fn an_auto_hidden_dock_costs_almost_nothing() {
+            // Hidden, it is a 4pt sliver against the bottom edge.
+            let (_, _, _, wb) = visible_frame(L, T, R, B, &[dock(480, 896, 960, 900)]);
+            assert_eq!(wb, 896);
+        }
+
+        #[test]
+        fn a_dock_parked_off_screen_is_ignored() {
+            let (wl, wt, wr, wb) = visible_frame(L, T, R, B, &[dock(480, 900, 960, 980)]);
+            assert_eq!((wl, wt, wr, wb), (L, T, R, B));
+        }
+
+        #[test]
+        fn a_floating_panel_is_not_chrome() {
+            // A notification banner: not against any edge, so it must not
+            // shrink anything. Chrome is defined by touching an edge.
+            let (wl, wt, wr, wb) = visible_frame(L, T, R, B, &[chrome(1000, 60, 1400, 180)]);
+            assert_eq!((wl, wt, wr, wb), (L, T, R, B));
+        }
+
+        #[test]
+        fn a_full_screen_element_is_not_a_thin_strip() {
+            // Something covering the display (a wallpaper window, a transition)
+            // must never be mistaken for an inset and blank the work area.
+            let (wl, wt, wr, wb) = visible_frame(L, T, R, B, &[chrome(L, T, R, B)]);
+            assert_eq!((wl, wt, wr, wb), (L, T, R, B));
+        }
+
+        #[test]
+        fn chrome_on_another_display_is_ignored() {
+            // A second display to the right owns its own Dock; it must not
+            // shrink this one.
+            let (wl, wt, wr, wb) = visible_frame(L, T, R, B, &[dock(1900, 820, 2400, 900)]);
+            assert_eq!((wl, wt, wr, wb), (L, T, R, B));
+        }
+
+        #[test]
+        fn a_second_display_gets_its_own_insets() {
+            // Displays sit side by side in one global space, so the second one
+            // is offset. Its Dock is at ITS bottom edge.
+            let (l2, t2, r2, b2) = (1440, 0, 3360, 1080);
+            let (wl, wt, wr, wb) =
+                visible_frame(l2, t2, r2, b2, &[dock(2100, 990, 2700, 1080)]);
+            assert_eq!((wl, wt, wr, wb), (1440, 0, 3360, 990));
+        }
+
+        #[test]
+        fn absurd_chrome_never_collapses_the_work_area() {
+            // Whatever the window server reports, the cat needs somewhere to
+            // stand: an implausible result falls back to the full display.
+            let (wl, wt, wr, wb) = visible_frame(L, T, R, B, &[dock(0, 100, 1440, 900)]);
+            assert_eq!((wl, wt, wr, wb), (L, T, R, B));
+        }
+
+        #[test]
+        fn the_result_is_never_inverted() {
+            for f in [
+                dock(0, 0, 1440, 900),
+                dock(480, 0, 960, 900),
+                chrome(0, 0, 1, 1),
+            ] {
+                let (wl, wt, wr, wb) = visible_frame(L, T, R, B, &[f]);
+                assert!(wr > wl && wb > wt, "work area collapsed");
+            }
+        }
     }
 
     /// Frontmost normal window covering its whole display.

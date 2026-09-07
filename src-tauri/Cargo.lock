@@ -3032,6 +3032,7 @@ dependencies = [
  "imap",
  "keyring",
  "native-tls",
+ "objc2",
  "pdfium-render",
  "rust_xlsxwriter",
  "semver",
