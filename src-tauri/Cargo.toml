@@ -72,6 +72,12 @@ uuid = { version = "1", features = ["v4"] }
 # cross-platform APIs, so the only thing needing native calls is the handful of
 # Quartz queries below (cursor, idle, event counters, window list).
 [target.'cfg(target_os = "macos")'.dependencies]
+# app.macOSPrivateApi in tauri.macos.conf.json and this feature must agree, and
+# tauri-build rejects the build if they do not - in EITHER direction. So it is
+# switched on here rather than in the shared dependency, where a Windows build
+# of this same tree would then be refused for having a feature its merged
+# config never asks for. This is what actually makes the NSWindow transparent.
+tauri = { version = "2", features = ["macos-private-api"] }
 core-graphics = "0.24"
 core-foundation = "0.10"
 # One Objective-C message, to put the overlay one level above the Dock.
