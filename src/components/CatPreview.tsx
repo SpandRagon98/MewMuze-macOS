@@ -36,6 +36,7 @@ export function CatPreview({ sizePx = 220 }: { sizePx?: number }) {
     let raf = 0;
     let last = performance.now();
     let stopped = false;
+    let lastSprite: HTMLCanvasElement | null = null;
 
     const tick = () => {
       if (stopped) return;
@@ -53,6 +54,12 @@ export function CatPreview({ sizePx = 220 }: { sizePx?: number }) {
       if (!cv || !ctx) return;
       const pose = ctrl.getPose();
       const sprite = applyAppearanceStroke(composeCostumeSprite(renderFrame(pose), pose));
+      // Poses run at 2-12fps; the loop runs at 60. Redrawing an unchanged
+      // sprite is five frames of clear-and-blit out of every six, and this
+      // preview shares the settings window with everything the user is
+      // actually trying to click.
+      if (sprite === lastSprite) return;
+      lastSprite = sprite;
       ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.imageSmoothingEnabled = false;
       const d = Math.min(cv.width, cv.height);

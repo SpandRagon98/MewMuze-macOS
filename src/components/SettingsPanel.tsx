@@ -8,6 +8,7 @@ import {
   watchSettingsWindowFocus,
 } from "../native/settingsWindow";
 import { CatPreview } from "./CatPreview";
+import { CostumeManager } from "../costumes/CostumeManager";
 import { clampStackLimit, MAIL_STACK_MAX, MAIL_STACK_MIN } from "../integrations/mailStack";
 
 /**
@@ -376,18 +377,7 @@ export function SettingsPanel({
                       <option value="glasses">Glasses</option>
                     </select>
                   </div>
-                  <div className="costume-manager" aria-labelledby="costume-manager-title">
-                    <div className="costume-manager-head">
-                      <div>
-                        <h3 id="costume-manager-title" className="sk-group-title">
-                          Costumes <span className="costume-coming-soon">Coming soon</span>
-                        </h3>
-                        <span className="sk-hint">
-                          Costume installation and management are being refined for a future update.
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                  <CostumeManager settings={s} onChange={onChange} />
                 </section>
               )}
 

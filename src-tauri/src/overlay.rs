@@ -276,6 +276,26 @@ pub fn init_overlay(win: &WebviewWindow) -> tauri::Result<()> {
     // Start fully click-through; the frontend enables interaction over the cat.
     let _ = win.set_ignore_cursor_events(true);
     position_window(win);
+    #[cfg(target_os = "macos")]
+    {
+        // AppKit resets a window's level whenever it re-orders the window -
+        // hiding and showing the app, changing Space, plugging in a display,
+        // waking from sleep. Setting it once at startup is not enough: the
+        // level quietly falls back to Tauri's floating 3, which is below the
+        // Dock, and the cat sinks behind it. Re-asserting is a no-op when the
+        // level is already right, so it can safely ride every window event.
+        let target = win.clone();
+        win.on_window_event(move |event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::Focused(_)
+                    | tauri::WindowEvent::Moved(_)
+                    | tauri::WindowEvent::Resized(_)
+            ) {
+                raise_above_dock(&target);
+            }
+        });
+    }
     #[cfg(windows)]
     {
         // Mouse activation happens after click-through is disabled. Repaint the
@@ -365,7 +385,9 @@ fn position_window(win: &WebviewWindow) {
 /// that risk and behaves identically on both architectures.
 #[cfg(target_os = "macos")]
 fn raise_above_dock(win: &WebviewWindow) {
-    /// kCGDockWindowLevel.
+    /// kCGDockWindowLevel. The menu bar is 24 and the status level 25; sitting
+    /// one above the Dock clears it and every desktop widget while leaving the
+    /// menu bar - which a desktop pet must never cover - alone.
     const DOCK_LEVEL: isize = 20;
     let Ok(ns_window) = win.ns_window() else {
         return;
@@ -404,6 +426,10 @@ pub fn set_cat_visible(window: WebviewWindow, visible: bool) -> tauri::Result<()
         window.show()?;
         let _ = window.set_ignore_cursor_events(true);
         position_window(&window);
+        // show() re-orders the window, which is exactly when macOS drops the
+        // level back below the Dock.
+        #[cfg(target_os = "macos")]
+        raise_above_dock(&window);
     } else {
         window.hide()?;
     }

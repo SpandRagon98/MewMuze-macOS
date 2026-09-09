@@ -570,6 +570,18 @@ export function applyAppearanceStroke(source: HTMLCanvasElement): HTMLCanvasElem
  * twice these numbers. Deliberately kept under the old peak-times-two so the
  * head follows the cursor further without the skull sliding off the neck.
  */
+/**
+ * The skull ellipse drawFrontFace actually draws, before species scaling.
+ *
+ * Named here rather than buried in the drawing code because the anchors have
+ * to report the same numbers; the two drifting apart is what put an eyewear
+ * costume a third too small on the face.
+ */
+export const FRONT_SKULL_RX = 12.3;
+export const FRONT_SKULL_RY = 11;
+export const TQ_SKULL_RX = 11.2;
+export const TQ_SKULL_RY = 10.2;
+
 const HEAD_LEAN_X = 0.95;
 const HEAD_LEAN_Y = 0.62;
 
@@ -1450,13 +1462,405 @@ function drawStripes(ctx: Ctx, cx: number, cy: number, vertical = false): void {
 }
 
 // ==== FRONT VIEW (chibi: huge head, big eyes) =============================
+/** One body mass, in 48-unit design space. */
+export interface BodyEllipse {
+  x: number;
+  y: number;
+  rx: number;
+  ry: number;
+}
+
+/**
+ * Where the torso and head actually are for a pose.
+ *
+ * The single source of truth for both the renderer and the costume overlay: a
+ * garment has to sit on the ellipse that is really drawn, and the torso moves a
+ * long way between poses (standing 34.5 with half-height 7.0, lying 40.0 with
+ * half-height 4.2) and again between species (chonk is 1.3x wide and rides 2.4
+ * units lower than classic). A second copy of this arithmetic would agree today
+ * and drift the first time a pose is tuned.
+ *
+ * Head lean and the sprite-edge clamps are applied by the draw functions AFTER
+ * this, so `head` is the head's resting place for the pose rather than its
+ * final leaned position. That is what a hat or a pair of spectacles wants:
+ * following the lean would make them swim against the face.
+ */
+export interface BodyAnchors {
+  torso: BodyEllipse;
+  /**
+   * Where the neck meets the jaw - what a collar attaches to.
+   *
+   * Deliberately smaller than the drawn skull and deliberately free of the
+   * head lean, because a collar sits on the shoulders and does not swing when
+   * the cat looks around.
+   */
+  head: BodyEllipse;
+  /**
+   * The skull as the renderer actually draws it, lean included.
+   *
+   * Anything WORN on the head - a visor, a hat, headphones - goes on this one.
+   * Sized off `head` instead, a visor came out a third too small and stayed
+   * put while the face moved out from under it.
+   */
+  skull: BodyEllipse;
+  /**
+   * Which way the chest points, +1 for the usual right-facing profile.
+   *
+   * The curled sleeping cat is drawn mirrored, so anything with a front and a
+   * back - a jacket's lapel, a collar - has to know, or it ends up on the tail.
+   */
+  faces: 1 | -1;
+}
+
+/**
+ * How far the head is displaced by the current look direction.
+ *
+ * Shared by the drawing paths and the anchors so a hat cannot drift off a
+ * head that has leaned away from it.
+ */
+function headLean(pose: PoseSpec): { dx: number; dy: number } {
+  return { dx: pose.headTurnX * HEAD_LEAN_X, dy: pose.headTurnY * HEAD_LEAN_Y };
+}
+
+function frontAnchors(pose: PoseSpec): BodyAnchors {
+  // Hanging off a window edge is drawn by drawHangingFront, which builds its
+  // own body and applies no species scaling. Matching it exactly here is what
+  // puts a costume on the swinging torso rather than on the standing one.
+  if (pose.body === "hang") {
+    const sway = Math.sin(pose.legPhase * Math.PI * 2) * 1.2;
+    const lean = headLean(pose);
+    return {
+      torso: { x: 24 + sway, y: 34, rx: 7.6, ry: 8.2 },
+      head: { x: 24 + sway, y: 20 + pose.headBob, rx: 8.4 * SP.head, ry: 7.6 * SP.head },
+      skull: {
+        x: 24 + sway + lean.dx,
+        y: 20 + pose.headBob + lean.dy,
+        rx: FRONT_SKULL_RX * SP.head,
+        ry: FRONT_SKULL_RY * SP.head,
+      },
+      faces: 1,
+    };
+  }
+  let hy = 15.5 + pose.headBob;
+  let by = 34;
+  let brx = 9;
+  let bry = 8.8;
+  if (pose.body === "loaf") { hy = 18 + pose.headBob; by = 38.5; brx = 12.5; bry = 6; }
+  if (pose.body === "dangle") { hy = 14 + pose.headBob; by = 32; brx = 7.6; bry = 8; }
+  if (pose.prop === "placard") {
+    hy += PLACARD_CAT_DROP;
+    by += PLACARD_CAT_DROP * 0.5;
+  }
+  brx *= SP.bodyW;
+  bry *= SP.bodyH;
+  if (pose.body !== "dangle") by += SP.bodyDrop;
+  hy += SP.bodyDrop * 0.55;
+  if (pose.prop === "placard") by = Math.min(by, 48 - 1.5 - bry);
+  const lean = headLean(pose);
+  return {
+    torso: { x: 24, y: by, rx: brx, ry: bry },
+    head: { x: 24, y: hy, rx: 8.4 * SP.head, ry: 7.6 * SP.head },
+    skull: {
+      x: 24 + lean.dx,
+      y: hy + lean.dy,
+      rx: FRONT_SKULL_RX * SP.head,
+      ry: FRONT_SKULL_RY * SP.head,
+    },
+    faces: 1,
+  };
+}
+
+/**
+ * The back view, which until now borrowed the front anchors.
+ *
+ * It draws a wider body than the front does, and its climbing branch is a
+ * completely separate silhouette that sways. Reporting the front's numbers put
+ * a costume next to the cat rather than on it, and the climb - the pose you
+ * get when the cat is stuck at the top of a window - was never painted at all.
+ */
+function backAnchors(pose: PoseSpec): BodyAnchors {
+  if (pose.body === "climb") {
+    const sway = Math.sin(pose.legPhase * Math.PI * 2) * 1.4;
+    // The climbing branch applies no species scaling, so neither does this.
+    return {
+      torso: { x: 24 + sway, y: 31, rx: 8, ry: 10.5 },
+      head: { x: 24 + sway, y: 14.5 + pose.headBob, rx: 8.4, ry: 7.6 },
+      skull: { x: 24 + sway, y: 14.5 + pose.headBob, rx: 10.5, ry: 9.4 },
+      faces: 1,
+    };
+  }
+  const drop = SP.bodyDrop;
+  const hy = 15.5 + pose.headBob + drop * 0.55;
+  return {
+    torso: { x: 24, y: 35.5 + drop, rx: 10 * SP.bodyW, ry: 8.6 * SP.bodyH },
+    head: { x: 24, y: hy, rx: 8.4 * SP.head, ry: 7.6 * SP.head },
+    skull: { x: 24, y: hy, rx: 11.6 * SP.head, ry: 10.4 * SP.head },
+    faces: 1,
+  };
+}
+
+function sideAnchors(pose: PoseSpec): BodyAnchors {
+  // The curled sleeping cat is drawn by its own branch in drawSide, with its
+  // own geometry and facing LEFT. Reporting the generic "lie" ellipse here
+  // would put a costume somewhere the body is not.
+  if (pose.body === "lie" && pose.eyes === "closed") {
+    const breath = Math.max(0, pose.headBob) * 0.45;
+    const head = { x: 16, y: 36.5 - breath * 0.35, rx: 7.5 * SP.head, ry: 6.5 * SP.head };
+    return {
+      torso: {
+        x: 25,
+        y: 37.6 - breath,
+        rx: 12.8 * SP.bodyW,
+        ry: (7.5 + breath * 0.25) * SP.bodyH,
+      },
+      head,
+      // The curled cat's head IS drawn at these radii, and a sleeping cat is
+      // not looking anywhere, so the lean does not apply.
+      skull: head,
+      faces: -1,
+    };
+  }
+
+  const gait = Math.sin(pose.legPhase * Math.PI * 2);
+  let bx = 17.5;
+  let by = 34.5 - Math.max(0, gait) * 0.6;
+  let brx = 9.6;
+  let bry = 7;
+  let hx = 31;
+  let hy = 21.5 + pose.headBob - Math.max(0, gait) * 0.4;
+  let hrx = 10.2;
+  let hry = 9.6;
+
+  if (pose.gesture === "wiggle") bx -= Math.sin(pose.legPhase * Math.PI * 2) * 1.3;
+  if (pose.body === "crouch") { by = 37; bry = 5.4; brx = 11; hx = 32; hy = 24 + pose.headBob; }
+  if (pose.body === "air") { bx = 16.5; by = 31; brx = 11; bry = 5.8; hx = 33; hy = 19 + pose.headBob; }
+  if (pose.body === "lie") { bx = 19; by = 40; brx = 12.5; bry = 4.2; hx = 33; hy = 32 + pose.headBob; hrx = 9; hry = 8.4; }
+  if (pose.body === "sit") { bx = 20.5; by = 34.5; brx = 8.3; bry = 9.2; hx = 27.5; hy = 20 + pose.headBob; }
+  if (pose.body === "stretch") {
+    const reach = Math.max(0, Math.min(1, pose.legPhase));
+    bx = 15 + reach * 1.5;
+    by = 32.5 - reach * 1.5;
+    brx = 11.5;
+    bry = 5.8;
+    hx = 33 + reach * 2;
+    hy = 30 + reach * 5 + pose.headBob;
+  }
+
+  brx *= SP.bodyW;
+  bry *= SP.bodyH;
+  hrx *= SP.head;
+  hry *= SP.head;
+  if (pose.body !== "lie") {
+    by += SP.bodyDrop;
+    hy += SP.bodyDrop;
+  }
+  hx += (SP.head - 1) * 2.2;
+
+  // Lean, then the clamps - in that order, so the clamps genuinely run last
+  // and bound the final head position. This used to live in drawSide, which
+  // meant the costume overlay read a head position the renderer had already
+  // moved on from.
+  const lean = headLean(pose);
+  hx += lean.dx;
+  hy += lean.dy;
+  if (pose.body === "stretch") {
+    // The bow pushes the head down and forward, and breed scaling (bigger
+    // skulls, lower bodies) is applied above - so clamp once the real head
+    // size AND lean are known, or chonk/kitten run off the bottom-right corner.
+    const margin = 2;
+    hy = Math.min(hy, 48 - margin - hry);
+    hx = Math.min(hx, 48 - margin - hrx);
+    hx = Math.max(hx, margin + hrx);
+  }
+  if (pose.body === "lie") {
+    // Low-slung breeds (chonk, kitten) carry a large bodyDrop that pushed the
+    // lying silhouette through the bottom of the sprite.
+    by = Math.min(by, 48 - 1.5 - bry);
+  }
+
+  const head = { x: hx, y: hy, rx: hrx, ry: hry };
+  return {
+    torso: { x: bx, y: by, rx: brx, ry: bry },
+    // In profile the drawn skull and the neck attachment are the same ellipse,
+    // so unlike the front view there is nothing to separate here.
+    head,
+    skull: head,
+    faces: 1,
+  };
+}
+
+/**
+ * Torso and head for whichever view the pose is in. Back and three-quarter
+ * share the front body; only the face differs, and a costume anchored to the
+ * torso does not care about the face.
+ */
+/**
+ * The turning cat is its own drawing path with its own body, offset left of
+ * centre and differently proportioned from the front view.
+ */
+function threeQuarterAnchors(pose: PoseSpec): BodyAnchors {
+  const drop = SP.bodyDrop;
+  const hy = 16.5 + pose.headBob + drop * 0.55;
+  const lean = headLean(pose);
+  return {
+    torso: { x: 23, y: 36 + drop, rx: 8.8 * SP.bodyW, ry: 7.6 * SP.bodyH },
+    head: { x: 26.5, y: hy, rx: 8.4 * SP.head, ry: 7.6 * SP.head },
+    skull: {
+      // Mid-turn the far eye is drawn a unit further out than the near one,
+      // so the skull's centre shifts with it.
+      x: 26.5 + 0.5 + lean.dx,
+      y: hy + lean.dy,
+      rx: TQ_SKULL_RX * SP.head,
+      ry: TQ_SKULL_RY * SP.head,
+    },
+    faces: 1,
+  };
+}
+
+export function bodyAnchors(pose: PoseSpec): BodyAnchors {
+  if (pose.view === "side") return sideAnchors(pose);
+  if (pose.view === "back") return backAnchors(pose);
+  if (pose.view === "threeQuarter") return threeQuarterAnchors(pose);
+  return frontAnchors(pose);
+}
+
+/** A point in 48-unit design space. */
+export interface LimbPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * One foreleg, as the renderer actually draws it.
+ *
+ * Shared with the costume system so a sleeve sits on the arm rather than near
+ * it. `paw` is where the paw blob lands, which is also where a sleeve must
+ * stop.
+ */
+export interface FrontLimb {
+  from: LimbPoint;
+  ctrl: LimbPoint;
+  to: LimbPoint;
+}
+
+/**
+ * Where a costume may paint, relative to the rest of the cat.
+ *
+ * "torso" runs after the body but BEFORE the forelegs and any prop, so a
+ * keyboard, a laptop and the paws themselves stay in front of the clothing.
+ * "limbs" runs after the forelegs, which is the only place a sleeve can go.
+ */
+export type CostumeLayer = "torso" | "limbs" | "face";
+
+export type CostumePainter = (ctx: Ctx, pose: PoseSpec, layer: CostumeLayer) => void;
+
+/**
+ * Paint anything worn on the head, after the face is drawn.
+ *
+ * A third seam beyond "torso" and "limbs": the face is the LAST thing every
+ * front-facing path draws, so eyewear painted at either of the other two ends
+ * up beneath the eyes it is meant to cover.
+ */
+
+let costumePainter: CostumePainter | null = null;
+/**
+ * Part of the frame cache key. Without it a cached sprite drawn while one
+ * costume was active would be handed back for another - a jacket that cannot
+ * be taken off, or a naked cat that refuses to get dressed.
+ */
+let costumeCacheKey = "";
+
+export function setCostumePainter(painter: CostumePainter | null, key: string): void {
+  costumePainter = painter;
+  costumeCacheKey = painter ? key : "";
+  clearSpriteCache();
+}
+
+function paintCostume(ctx: Ctx, pose: PoseSpec, layer: CostumeLayer): void {
+  if (!costumePainter) return;
+  ctx.save();
+  // The raw context is in PIXELS - every drawing helper in this file converts
+  // from design units itself. A painter is handed the 48-unit space instead, so
+  // its numbers read the same as the geometry it gets from bodyAnchors.
+  ctx.scale(S, S);
+  costumePainter(ctx, pose, layer);
+  ctx.restore();
+}
+
+/**
+ * The foreleg paths for a pose, in draw order.
+ *
+ * Extracted so the costume system can put a sleeve on the same curve the
+ * renderer strokes. A second copy of these numbers would agree today and drift
+ * the first time a gesture is retuned.
+ */
+export function frontLimbs(pose: PoseSpec, by: number): FrontLimb[] {
+  // These props draw their own forepaws (on a deck, or gripping a handle), so
+  // there is no free-standing limb to sleeve.
+  if (
+    pose.prop === "keyboard" ||
+    pose.prop === "laptop" ||
+    pose.prop === "placard" ||
+    pose.prop === "calculator"
+  )
+    return [];
+
+  if (pose.gesture === "cheer") {
+    return [-1, 1].map((d) => ({
+      from: { x: 24 + d * 6, y: by },
+      ctrl: { x: 24 + d * 10, y: by - 6 },
+      to: { x: 24 + d * 11, y: by - 12 },
+    }));
+  }
+  if (pose.gesture === "clap") {
+    return [-1, 1].map((d) => ({
+      from: { x: 24 + d * 6, y: by },
+      ctrl: { x: 24 + d * 8.5, y: by - 7 },
+      to: { x: 24 + d * 1.8, y: by - 12.5 },
+    }));
+  }
+  if (pose.gesture === "knead") {
+    const leftDown = pose.legPhase < 0.5;
+    return [-1, 1].map((d) => {
+      const down = d === -1 ? leftDown : !leftDown;
+      const fy = down ? 43.2 : 41.2;
+      return {
+        from: { x: 24 + d * 4.5, y: by },
+        ctrl: { x: 24 + d * 5.4, y: 40 },
+        to: { x: 24 + d * 5.6, y: fy },
+      };
+    });
+  }
+  if (pose.gesture === "pawUp" || pose.gesture === "groom" || pose.gesture === "scratch" || pose.gesture === "swat") {
+    const leftRaised = pose.legPhase < 0.5;
+    const d = leftRaised ? -1 : 1;
+    const target =
+      pose.gesture === "scratch"
+        ? { x: 24 + d * 9, y: 22 }
+        : pose.gesture === "swat"
+          ? { x: 24 + d * 8, y: 17 }
+          : { x: 24 + d * 6.5, y: 27 };
+    const g = -d;
+    return [
+      { from: { x: 24 + d * 5, y: by }, ctrl: { x: 24 + d * 8, y: 33 }, to: target },
+      { from: { x: 24 + g * 4.5, y: by }, ctrl: { x: 24 + g * 4.5, y: 40 }, to: { x: 24 + g * 4.5, y: 43.2 } },
+    ];
+  }
+  return [-1, 1].map((d) => ({
+    from: { x: 24 + d * 4.4, y: by },
+    ctrl: { x: 24 + d * 4.4, y: 40 },
+    to: { x: 24 + d * 4.4, y: 43 },
+  }));
+}
+
 function drawFrontFace(ctx: Ctx, hx: number, hy: number, pose: PoseSpec, threeQuarter = false): void {
-  const hrx = (threeQuarter ? 11.2 : 12.3) * SP.head;
-  const hry = (threeQuarter ? 10.2 : 11) * SP.head;
+  const hrx = (threeQuarter ? TQ_SKULL_RX : FRONT_SKULL_RX) * SP.head;
+  const hry = (threeQuarter ? TQ_SKULL_RY : FRONT_SKULL_RY) * SP.head;
   // Lean the whole head unit — skull, ears and face move together, so it reads
   // as the cat turning to look rather than its features sliding around.
-  hx += pose.headTurnX * HEAD_LEAN_X;
-  hy += pose.headTurnY * HEAD_LEAN_Y;
+  const lean = headLean(pose);
+  hx += lean.dx;
+  hy += lean.dy;
 
   drawEar(ctx, hx - hrx * 0.67, hy - hry + 3, -1, pose.ears);
   drawEar(ctx, hx + hrx * 0.67, hy - hry + 3, 1, pose.ears);
@@ -1511,19 +1915,23 @@ function drawFrontPaws(ctx: Ctx, pose: PoseSpec, by: number): void {
     pose.prop === "calculator"
   )
     return;
+  // Paths come from frontLimbs so the costume can sleeve the same curve; the
+  // paws, gleams and impact ticks below stay here because they are the cat,
+  // not the limb.
+  const limbs = frontLimbs(pose, by);
   if (pose.gesture === "cheer") {
-    for (const d of [-1, 1] as const) {
-      curvedLimb(ctx, { x: 24 + d * 6, y: by }, { x: 24 + d * 10, y: by - 6 }, { x: 24 + d * 11, y: by - 12 }, 1.7);
-      blob(ctx, 24 + d * 11, by - 12, 2.2, 1.9, FUR);
+    for (const limb of limbs) {
+      curvedLimb(ctx, limb.from, limb.ctrl, limb.to, 1.7);
+      blob(ctx, limb.to.x, limb.to.y, 2.2, 1.9, FUR);
     }
     return;
   }
   if (pose.gesture === "clap") {
     // Both paws overhead and TOGETHER: with "cheer" (apart) on the alternate
     // frame this reads as an urgent little clap. Tiny impact ticks sell the hit.
-    for (const d of [-1, 1] as const) {
-      curvedLimb(ctx, { x: 24 + d * 6, y: by }, { x: 24 + d * 8.5, y: by - 7 }, { x: 24 + d * 1.8, y: by - 12.5 }, 1.7);
-      blob(ctx, 24 + d * 1.8, by - 12.5, 2.2, 1.9, FUR);
+    for (const limb of limbs) {
+      curvedLimb(ctx, limb.from, limb.ctrl, limb.to, 1.7);
+      blob(ctx, limb.to.x, limb.to.y, 2.2, 1.9, FUR);
     }
     px(ctx, 24 - 4.6, by - 15.2, 1.3, 0.55, EYE_SHINE);
     px(ctx, 24 + 3.3, by - 15.2, 1.3, 0.55, EYE_SHINE);
@@ -1532,41 +1940,37 @@ function drawFrontPaws(ctx: Ctx, pose: PoseSpec, by: number): void {
   }
   if (pose.gesture === "knead") {
     const leftDown = pose.legPhase < 0.5;
-    for (const d of [-1, 1] as const) {
+    limbs.forEach((limb, i) => {
+      const d = i === 0 ? -1 : 1;
       const down = d === -1 ? leftDown : !leftDown;
-      const fy = down ? 43.2 : 41.2;
-      curvedLimb(ctx, { x: 24 + d * 4.5, y: by }, { x: 24 + d * 5.4, y: 40 }, { x: 24 + d * 5.6, y: fy }, 1.7);
-      blob(ctx, 24 + d * 5.6, fy, 2.5, 1.6, FUR);
-      if (down) px(ctx, 24 + d * 5.6 - 1, fy + 1, 2, 0.8, PAW_GLEAM);
-    }
+      curvedLimb(ctx, limb.from, limb.ctrl, limb.to, 1.7);
+      blob(ctx, limb.to.x, limb.to.y, 2.5, 1.6, FUR);
+      if (down) px(ctx, limb.to.x - 1, limb.to.y + 1, 2, 0.8, PAW_GLEAM);
+    });
     return;
   }
   if (pose.gesture === "pawUp" || pose.gesture === "groom" || pose.gesture === "scratch" || pose.gesture === "swat") {
-    const leftRaised = pose.legPhase < 0.5;
-    const d = leftRaised ? -1 : 1;
-    const target =
-      pose.gesture === "scratch" ? { x: 24 + d * 9, y: 22 } : pose.gesture === "swat" ? { x: 24 + d * 8, y: 17 } : { x: 24 + d * 6.5, y: 27 };
-    curvedLimb(ctx, { x: 24 + d * 5, y: by }, { x: 24 + d * 8, y: 33 }, target, 1.7);
-    blob(ctx, target.x, target.y, 2.2, 1.8, FUR);
-    const g = -d;
-    curvedLimb(ctx, { x: 24 + g * 4.5, y: by }, { x: 24 + g * 4.5, y: 40 }, { x: 24 + g * 4.5, y: 43.2 }, 1.7);
-    blob(ctx, 24 + g * 4.5, 43.2, 2.8, 1.6, FUR);
+    const [raised, resting] = limbs;
+    curvedLimb(ctx, raised.from, raised.ctrl, raised.to, 1.7);
+    blob(ctx, raised.to.x, raised.to.y, 2.2, 1.8, FUR);
+    curvedLimb(ctx, resting.from, resting.ctrl, resting.to, 1.7);
+    blob(ctx, resting.to.x, resting.to.y, 2.8, 1.6, FUR);
     return;
   }
-  for (const d of [-1, 1] as const) {
+  for (const limb of limbs) {
     // Foreleg down to the paw. The paws sit on a fixed ground line while the
     // torso height varies by species (a leggy siamese rides higher on a
     // negative bodyDrop), which left them floating clear of the body. The limb
     // starts inside the torso, so it only becomes visible across the gap it fills.
-    curvedLimb(ctx, { x: 24 + d * 4.4, y: by }, { x: 24 + d * 4.4, y: 40 }, { x: 24 + d * 4.4, y: 43 }, 1.7);
+    curvedLimb(ctx, limb.from, limb.ctrl, limb.to, 1.7);
     if (SOCKED) {
       // White boots: draw the whole front paw pale, not a two-pixel gleam.
-      blob(ctx, 24 + d * 4.4, 43, 3, 1.9, SOCK);
-      blob(ctx, 24 + d * 4.4, 41.4, 2.3, 1.2, SOCK);
+      blob(ctx, limb.to.x, limb.to.y, 3, 1.9, SOCK);
+      blob(ctx, limb.to.x, limb.to.y - 1.6, 2.3, 1.2, SOCK);
     } else {
-      blob(ctx, 24 + d * 4.4, 43, 3, 1.9, FUR);
-      px(ctx, 24 + d * 4.4 - 1.4, 44, 1, 0.8, PAW_GLEAM);
-      px(ctx, 24 + d * 4.4 + 0.4, 44, 1, 0.8, PAW_GLEAM);
+      blob(ctx, limb.to.x, limb.to.y, 3, 1.9, FUR);
+      px(ctx, limb.to.x - 1.4, limb.to.y + 1, 1, 0.8, PAW_GLEAM);
+      px(ctx, limb.to.x + 0.4, limb.to.y + 1, 1, 0.8, PAW_GLEAM);
     }
   }
 }
@@ -1586,12 +1990,16 @@ function drawHangingFront(ctx: Ctx, pose: PoseSpec): void {
   curvedLimb(ctx, { x: 29.5 + sway, y: pawY }, { x: 29.5 + sway, y: 10 }, { x: 28.5 + sway, y: 16 }, 1.6);
   // Body dangles under the big head.
   blob(ctx, 24 + sway, 34, 7.6, 8.2, FUR);
+  // Straight after the body and before the hind legs, the same seam every
+  // other view uses.
+  paintCostume(ctx, pose, "torso");
   drawTail(ctx, { x: 18 + sway, y: 37 }, { x: 10 + sway, y: 39 }, { x: 11.5 + sway, y: 27 });
   for (const d of [-1, 1] as const) {
     curvedLimb(ctx, { x: 24 + d * 4 + sway, y: 39 }, { x: 24 + d * 4.6 + sway, y: 42 }, { x: 24 + d * 4.4 + sway, y: 44.2 }, 1.5);
     blob(ctx, 24 + d * 4.4 + sway, 44.2, 2.2, 1.3, FUR);
   }
   drawFrontFace(ctx, 24 + sway, 20 + pose.headBob, pose);
+  paintCostume(ctx, pose, "face");
 }
 
 function drawFront(ctx: Ctx, pose: PoseSpec): void {
@@ -1600,28 +2008,15 @@ function drawFront(ctx: Ctx, pose: PoseSpec): void {
     return;
   }
 
+  // Geometry lives in frontAnchors so the costume overlay places a garment on
+  // the very same ellipse this function draws. Everything below still mutates
+  // hy for lean and clamps, which is why anchors are taken first.
+  const anchors = frontAnchors(pose);
   const hx = 24;
-  let hy = 15.5 + pose.headBob;
-  let by = 34;
-  let brx = 9;
-  let bry = 8.8;
-  if (pose.body === "loaf") { hy = 18 + pose.headBob; by = 38.5; brx = 12.5; bry = 6; }
-  if (pose.body === "dangle") { hy = 14 + pose.headBob; by = 32; brx = 7.6; bry = 8; }
-  // The placard is held OVERHEAD, and the head normally reaches design-unit 4.5
-  // — leaving no room above it. Drop the whole cat so the board has clear space
-  // and does not sit on the face.
-  if (pose.prop === "placard") {
-    hy += PLACARD_CAT_DROP;
-    by += PLACARD_CAT_DROP * 0.5;
-  }
-  // Species proportions: torso mass and how high the body rides on the legs.
-  brx *= SP.bodyW;
-  bry *= SP.bodyH;
-  if (pose.body !== "dangle") by += SP.bodyDrop;
-  hy += SP.bodyDrop * 0.55;
-  // The placard drop plus a heavy breed's own bodyDrop pushed chonk straight
-  // through the bottom of the sprite. Clamp once the real torso size is known.
-  if (pose.prop === "placard") by = Math.min(by, 48 - 1.5 - bry);
+  const hy = anchors.head.y;
+  const by = anchors.torso.y;
+  const brx = anchors.torso.rx;
+  const bry = anchors.torso.ry;
 
   // Long curved tail.
   if (pose.body !== "dangle") {
@@ -1668,6 +2063,10 @@ function drawFront(ctx: Ctx, pose: PoseSpec): void {
     blob(ctx, hx, 32.3 + pose.headBob * 0.1, 4.5, 3.4, [CHEST[0], CHEST[1]]);
   }
 
+  // The garment goes on BEFORE the legs, and for every body - petting
+  // alternates between "sit" and "loaf" frames, so painting it only in the
+  // final branch made the jacket flicker off on every other petted frame.
+  paintCostume(ctx, pose, "torso");
   if (pose.body === "dangle") {
     for (const x of [19.5, 23, 26.5, 29.5]) {
       curvedLimb(ctx, { x, y: by + 3 }, { x: x + Math.sin(pose.legPhase * Math.PI * 2), y: 40 }, { x, y: 44 }, 1.4);
@@ -1678,6 +2077,9 @@ function drawFront(ctx: Ctx, pose: PoseSpec): void {
     blob(ctx, 29, 43, 3.4, 1.7, FUR);
   } else {
     drawFrontPaws(ctx, pose, by + 2);
+    // Sleeves only where drawFrontPaws actually drew forelegs to sleeve; the
+    // other two branches draw paw blobs with no limb behind them.
+    paintCostume(ctx, pose, "limbs");
   }
 
   // Props sit in front of the body, under the chin.
@@ -1690,6 +2092,7 @@ function drawFront(ctx: Ctx, pose: PoseSpec): void {
   else if (pose.prop === "bowl") drawBowl(ctx, pose.legPhase);
 
   drawFrontFace(ctx, hx, hy, pose);
+  paintCostume(ctx, pose, "face");
   // After the face: the raised forelegs must pass IN FRONT of the head, and the
   // board sits above it, so both would be overpainted if drawn with the props.
   if (pose.prop === "placard") {
@@ -1747,77 +2150,21 @@ function drawSideTail(ctx: Ctx, pose: PoseSpec, root: Pt): void {
 }
 
 function drawSide(ctx: Ctx, pose: PoseSpec): void {
-  const gait = Math.sin(pose.legPhase * Math.PI * 2);
-  let bx = 17.5;
-  let by = 34.5 - Math.max(0, gait) * 0.6;
-  let brx = 9.6;
-  let bry = 7;
-  let hx = 31;
-  let hy = 21.5 + pose.headBob - Math.max(0, gait) * 0.4;
-  let hrx = 10.2;
-  let hry = 9.6;
+  // Same source of truth as the costume overlay - see frontAnchors above.
+  const anchors = sideAnchors(pose);
+  const bx = anchors.torso.x;
+  const by = anchors.torso.y;
+  const brx = anchors.torso.rx;
+  const bry = anchors.torso.ry;
+  // The play-bow of a stretch, species proportions, the head lean and the
+  // edge clamps all live in sideAnchors now. Re-deriving any of them here is
+  // what let the renderer and the costume overlay disagree about where the
+  // cat was.
+  const hx = anchors.head.x;
+  const hy = anchors.head.y;
+  const hrx = anchors.head.rx;
+  const hry = anchors.head.ry;
 
-  if (pose.gesture === "wiggle") bx -= Math.sin(pose.legPhase * Math.PI * 2) * 1.3;
-  if (pose.body === "crouch") { by = 37; bry = 5.4; brx = 11; hx = 32; hy = 24 + pose.headBob; }
-  if (pose.body === "air") { bx = 16.5; by = 31; brx = 11; bry = 5.8; hx = 33; hy = 19 + pose.headBob; }
-  if (pose.body === "lie") { bx = 19; by = 40; brx = 12.5; bry = 4.2; hx = 33; hy = 32 + pose.headBob; hrx = 9; hry = 8.4; }
-  if (pose.body === "sit") { bx = 20.5; by = 34.5; brx = 8.3; bry = 9.2; hx = 27.5; hy = 20 + pose.headBob; }
-  if (pose.body === "stretch") {
-    // The real cat stretch is a play-bow: chest sinks to the floor, hips stay
-    // high, the spine arches, and the front legs reach a long way forward.
-    // `legPhase` drives how deep the bow is, 0 = standing, 1 = fully folded.
-    const reach = Math.max(0, Math.min(1, pose.legPhase));
-    bx = 15 + reach * 1.5;
-    by = 32.5 - reach * 1.5; // hips ride UP as the chest goes down
-    brx = 11.5;
-    bry = 5.8;
-    // Kept deliberately conservative: the head is the widest, tallest mass on
-    // the cat, so pushing it much further forward/down runs the skull off the
-    // bottom-right of the sprite on big-headed breeds (chonk, kitten).
-    hx = 33 + reach * 2;
-    hy = 30 + reach * 5 + pose.headBob;
-  }
-
-  // Species proportions. The torso grows/shrinks, the whole cat rides lower on
-  // short legs, and the head scales with the breed's head trait.
-  brx *= SP.bodyW;
-  bry *= SP.bodyH;
-  hrx *= SP.head;
-  hry *= SP.head;
-  // `bodyDrop` models SHORT LEGS, so it only applies while the cat is up on
-  // them. A lying cat is already on the floor; adding the drop there pushed
-  // low-slung breeds (chonk, kitten) straight through the bottom of the sprite.
-  if (pose.body !== "lie") {
-    by += SP.bodyDrop;
-    hy += SP.bodyDrop;
-  }
-  // Keep the muzzle from drifting off a smaller/larger skull.
-  hx += (SP.head - 1) * 2.2;
-
-  // Head lean is added BEFORE the clamps below, so those clamps genuinely run
-  // last and bound the final head position. It previously came after them, and
-  // the lean escaped the stretch clamp entirely — invisible while the lean
-  // maxed out at 1.15 units and the margin absorbed it, but the moment the
-  // range grew to +-2 the bowing muzzle ran off the right edge on kitten and
-  // fluffy. Still ahead of the shoulder->jaw sweep derived below, so the neck
-  // follows and the head never looks detached.
-  hx += pose.headTurnX * HEAD_LEAN_X;
-  hy += pose.headTurnY * HEAD_LEAN_Y;
-
-  if (pose.body === "stretch") {
-    // The bow pushes the head down and forward, and breed scaling (bigger
-    // skulls, lower bodies) is applied above — so clamp once the real head
-    // size AND lean are known, or chonk/kitten run off the bottom-right corner.
-    const margin = 2;
-    hy = Math.min(hy, 48 - margin - hry);
-    hx = Math.min(hx, 48 - margin - hrx);
-    hx = Math.max(hx, margin + hrx);
-  }
-  if (pose.body === "lie") {
-    // Low-slung breeds (chonk, kitten) carry a large bodyDrop that pushed the
-    // lying silhouette through the bottom of the sprite.
-    by = Math.min(by, 48 - 1.5 - bry);
-  }
 
   // Curled-up sleeping ball.
   if (pose.body === "lie" && pose.eyes === "closed") {
@@ -1828,6 +2175,9 @@ function drawSide(ctx: Ctx, pose: PoseSpec): void {
     const ch = SP.bodyH;
     blob(ctx, 25, 37.6 - breath, 12.8 * cw, (7.5 + breath * 0.25) * ch, BODY);
     blob(ctx, 31, 37.2 - breath, 7.2 * cw, 7.2 * ch, BODY);
+    // Clothing before the head, ears, muzzle, tucked paws and the tail that
+    // wraps across the front - all of which belong in front of it.
+    paintCostume(ctx, pose, "torso");
     blob(ctx, 16, 36.5 - breath * 0.35, 7.5 * SP.head, 6.5 * SP.head, FUR);
     // Two relaxed ears, a resting muzzle, closed eye and tucked forepaws.
     const earY = 32.2 - breath * 0.35;
@@ -1835,6 +2185,10 @@ function drawSide(ctx: Ctx, pose: PoseSpec): void {
     tri(ctx, { x: 12.5, y: earY }, { x: 14.3, y: earY }, { x: 13.2, y: earY - 2 }, EAR_DARK);
     tri(ctx, { x: 16, y: earY + 0.4 }, { x: 19.8, y: earY + 0.4 }, { x: 18.1, y: earY - 3.3 }, FUR[2]);
     tri(ctx, { x: 17, y: earY - 0.2 }, { x: 18.9, y: earY - 0.2 }, { x: 18.1, y: earY - 2.2 }, EAR_DARK);
+    // The head seam. This branch returns early too, so a mask or a hat came
+    // off whenever the cat curled up to sleep. Before the muzzle and nose, so
+    // those stay in front of it.
+    paintCostume(ctx, pose, "face");
     blob(ctx, 10.2, 38 - breath * 0.35, 2.6, 2, FUR);
     blob(ctx, 8.7, 37.5 - breath * 0.35, 0.7, 0.6, [NOSE]);
     stroke(ctx, { x: 12.2, y: 35.8 - breath * 0.35 }, { x: 14, y: 37 - breath * 0.35 }, { x: 15.8, y: 35.8 - breath * 0.35 }, 0.55, FUR[3]);
@@ -1944,6 +2298,10 @@ function drawSide(ctx: Ctx, pose: PoseSpec): void {
     [FUR[0], FUR[1], FUR[2]],
   );
   blob(ctx, shoulder.x - 0.8, shoulder.y + 0.8, 5.8, 6.2, [FUR[0], FUR[1], FUR[2]]);
+  // Clothing goes on after the shoulder sweep - the last fur mass that would
+  // otherwise be painted over it - and before the head. It is clipped to the
+  // torso, so the paws and the face stay clear regardless.
+  paintCostume(ctx, pose, "torso");
   drawEar(ctx, hx - 4.2, hy - hry + 2.6, -1, pose.ears);
   drawEar(ctx, hx + 4.2, hy - hry + 2.6, 1, pose.ears);
   blob(ctx, hx, hy, hrx, hry, FUR);
@@ -1953,6 +2311,7 @@ function drawSide(ctx: Ctx, pose: PoseSpec): void {
   stroke(ctx, { x: hx + hrx - 2.6, y: hy + 4.4 }, { x: hx + hrx - 1.4, y: hy + 5.2 }, { x: hx + hrx - 0.2, y: hy + 4.2 }, 0.4, MOUTH);
 
   drawEye(ctx, hx + 3.3, hy - 0.8, pose, true, 1);
+  paintCostume(ctx, pose, "face");
   if (pose.eyes !== "closed") px(ctx, hx + hrx - 0.6, hy + 4.6, 1.9, 0.5, WHISKER);
   if (pose.blush) blob(ctx, hx + 2.2, hy + 4.4, 1.7, 0.9, [BLUSH]);
   sideAccessory(ctx, hx, hy, hrx, hry, { x: bx + 6, y: pose.body === "sit" ? 39.3 : 38.5 });
@@ -1969,6 +2328,11 @@ function drawBack(ctx: Ctx, pose: PoseSpec): void {
     drawEar(ctx, 17.5 + sway, 9.5, -1, pose.ears);
     drawEar(ctx, 30.5 + sway, 9.5, 1, pose.ears);
     blob(ctx, 24 + sway, 14.5 + pose.headBob, 10.5, 9.4, FUR);
+    // After the head and before the paws, matching the rest of drawBack. This
+    // branch returns early, so a costume painted only at the bottom of
+    // drawBack came off the moment the cat climbed - and painting it before
+    // the head instead buried anything worn ON the head under the skull.
+    paintCostume(ctx, pose, "torso");
     const phase = pose.legPhase < 0.5 ? 0 : 1;
     const paws = phase === 0 ? [{ x: 15, y: 18 }, { x: 33, y: 25 }, { x: 17, y: 38 }, { x: 31, y: 42.6 }] : [{ x: 15, y: 25 }, { x: 33, y: 18 }, { x: 17, y: 42.6 }, { x: 31, y: 38 }];
     // Hind legs. Whichever hind paw is at the bottom of the climb cycle reaches
@@ -1992,6 +2356,11 @@ function drawBack(ctx: Ctx, pose: PoseSpec): void {
   blob(ctx, 24, 15.5 + pose.headBob + drop * 0.55, 11.6 * hs, 10.4 * hs, FUR);
   blob(ctx, 24, 31 + drop, 6, 6.6, CHEST);
   drawStripes(ctx, 24, 33 + drop, true);
+  // AFTER the nape patch and the stripes, unlike the other views: from behind
+  // those two are body markings drawn late so they sit over the head/shoulder
+  // seam, and painting the costume first left a pale disc floating on the
+  // jacket. The head is clear of the torso ellipse, so nothing else moves.
+  paintCostume(ctx, pose, "torso");
   if (seasonalAccessory(ctx, 24, 15.5 + pose.headBob + drop * 0.55, 11.6 * hs, 10.4 * hs, 1)) return;
   if (accessory === "headphones") {
     stroke(ctx, { x: 13, y: 15.5 }, { x: 24, y: 1.8 }, { x: 35, y: 15.5 }, 1.45, PHONES_DARK);
@@ -2023,6 +2392,7 @@ function drawThreeQuarter(ctx: Ctx, pose: PoseSpec): void {
   drawTail(ctx, { x: 16, y: 39 + drop }, { x: 7.5, y: 38 + drop }, { x: 9.5, y: 24 }, pose.tail === "puff");
   blob(ctx, 23, by, brx, bry, BODY);
   blob(ctx, 19.5, 40 + drop, 6 * SP.bodyW, 4.6 * SP.bodyH, BODY);
+  paintCostume(ctx, pose, "torso");
   // Forelegs down to the paws, for the same reason as the front view: the paws
   // sit on a fixed ground line the raised torso of a leggy breed cannot reach.
   for (const pawX of [18.5, 28]) {
@@ -2040,6 +2410,7 @@ function drawThreeQuarter(ctx: Ctx, pose: PoseSpec): void {
     blob(ctx, (hx + 23) / 2, midY, Math.max(4.8, brx * 0.62), Math.max(3.4, halfSpan), FUR);
   }
   drawFrontFace(ctx, hx, hy, pose, true);
+  paintCostume(ctx, pose, "face");
 }
 
 // ---- assembly ------------------------------------------------------------
@@ -2171,6 +2542,9 @@ export function spriteEpoch(): number {
 function keyFor(pose: PoseSpec): string {
   return [
     appearanceKey,
+    // A frame painted while one costume was active must never be handed back
+    // for another - or for none.
+    costumeCacheKey,
     pose.view,
     pose.body,
     pose.legPhase.toFixed(2),

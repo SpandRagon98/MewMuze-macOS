@@ -231,6 +231,10 @@ export function sanitizeSettings(raw: unknown): Settings {
   s.costumeMigrationNoticePending =
     bool(r.costumeMigrationNoticePending, false) || s.costumeMigrationNoticePending;
   if (r.uiTheme === "dark" || r.uiTheme === "light") s.uiTheme = r.uiTheme;
+  // Hex only, so a hand-edited settings.json cannot inject a colour string
+  // that reaches a canvas fillStyle.
+  const tint = str(r.costumeTint, "", 9);
+  s.costumeTint = /^#[0-9a-f]{6}$/i.test(tint) ? tint : "";
   s.photoFolder = str(r.photoFolder, "", 500);
   s.agentStatusFile = str(r.agentStatusFile, "", 500);
   s.licenseKey = str(r.licenseKey, "", 400);

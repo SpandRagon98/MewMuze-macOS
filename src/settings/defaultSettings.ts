@@ -123,6 +123,12 @@ export interface Settings {
   appearance: CatAppearance;
   /** Installed Store costume ID, or empty when the visual skin is disabled. */
   selectedCostumeId: string;
+  /**
+   * Chosen colour for costumes that offer one, as a hex string. Empty means
+   * the costume's own default, which is what every existing settings.json
+   * sanitises to.
+   */
+  costumeTint: string;
   /** Legacy setting retained for backwards-compatible persistence; always false. */
   seasonalCostumes: boolean;
   /** Completed version of the built-in costume-catalog migration. */
@@ -209,6 +215,7 @@ export const DEFAULT_SETTINGS: Settings = {
     strokeColor: "#ffffff",
   },
   selectedCostumeId: "",
+  costumeTint: "",
   seasonalCostumes: false,
   costumeCatalogMigrationVersion: 1,
   costumeMigrationNoticePending: false,

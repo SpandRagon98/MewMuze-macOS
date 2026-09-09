@@ -1,18 +1,41 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CatView, PoseSpec } from "../animation/spriteLoader";
+import {
+  bodyAnchors,
+  setCostumePainter,
+  type BodyEllipse,
+  type CatView,
+  type CostumePainter,
+  type PoseSpec,
+} from "../animation/spriteLoader";
 
 interface VisualLayerPayload {
   dataUrl: string;
+  variant: string;
+  /** Which body mass this piece rides: "torso", "head" or "sprite". */
+  anchor: string;
   offsetX: number;
   offsetY: number;
   scale: number;
   opacity: number;
 }
 
+/** Where the artist assumed the body was, in the costume's design space. */
+interface CostumeAnchorSpec {
+  space: string;
+  designSize: number;
+  /** Cap on how far the garment may be stretched out of proportion. */
+  maxAspect?: number;
+  torso: Record<string, BodyEllipse>;
+  head: Record<string, BodyEllipse>;
+}
+
 interface CostumeVisualsPayload {
   costumeId: string;
   supportedBodies: string[];
-  views: Record<string, Record<string, VisualLayerPayload>>;
+  /** Every layer for a view, in manifest order - a costume is often several
+   *  garments at once, so this is a list rather than one entry per variant. */
+  views: Record<string, VisualLayerPayload[]>;
+  anchor: CostumeAnchorSpec | null;
 }
 
 interface LoadedLayer extends Omit<VisualLayerPayload, "dataUrl"> {
@@ -20,6 +43,37 @@ interface LoadedLayer extends Omit<VisualLayerPayload, "dataUrl"> {
 }
 
 type ArmorVariant = "base" | "maskOpen" | "eyeGlow";
+
+import { paintCorporateCat, CORPORATE_CAT_ID } from "./corporateCat";
+import { cyberpunkPainter, resolveCyberpunkColour, CYBERPUNK_CAT_ID } from "./cyberpunkCat";
+import { batCatPainter, resolveBatcatColour, BATCAT_ID } from "./batCat";
+
+/**
+ * Costumes drawn INSIDE the sprite instead of composited over the finished
+ * frame.
+ *
+ * One table, because every id here has to be known in two places at once: the
+ * painter that draws it, and the fact that `composeCostumeSprite` must NOT
+ * then paste the package's own PNG layers on top of what that painter drew.
+ * Naming the ids separately in both places is exactly how the Cyberpunk cat
+ * ended up wearing two jackets, the second one over the paws and props the
+ * first had carefully stayed behind.
+ *
+ * `tint` is the customer's chosen colour; costumes that do not offer one
+ * ignore it. The returned key goes straight into the sprite cache key, so it
+ * must change whenever the drawing would.
+ */
+const PROCEDURAL: Record<string, (tint: string) => { painter: CostumePainter; key: string }> = {
+  [CORPORATE_CAT_ID]: () => ({ painter: paintCorporateCat, key: CORPORATE_CAT_ID }),
+  [CYBERPUNK_CAT_ID]: (tint) => {
+    const colour = resolveCyberpunkColour(tint);
+    return { painter: cyberpunkPainter(colour), key: `${CYBERPUNK_CAT_ID}:${colour}` };
+  },
+  [BATCAT_ID]: (tint) => {
+    const colour = resolveBatcatColour(tint);
+    return { painter: batCatPainter(colour), key: `${BATCAT_ID}:${colour}` };
+  },
+};
 
 const IRON_MAN_CAT_ID = "mewmuze.iron-man-cat.v1";
 const DESIGN_SIZE = 48;
@@ -35,7 +89,8 @@ const ARMOR = {
 };
 
 let activeCostumeId = "";
-let activeViews = new Map<string, Map<string, LoadedLayer>>();
+let activeViews = new Map<string, LoadedLayer[]>();
+let activeAnchor: CostumeAnchorSpec | null = null;
 let overlayEpochValue = 0;
 let composites = new WeakMap<object, Map<string, HTMLCanvasElement>>();
 
@@ -48,36 +103,64 @@ function loadImage(source: string): Promise<HTMLImageElement> {
   });
 }
 
+/**
+ * Colour for costumes that offer one. Held here rather than passed through
+ * every call site: the overlay is what decides which painter is live, so it is
+ * also the thing that has to know which colour that painter was built for.
+ */
+let activeTint = "";
+
+/** Set the tint BEFORE activating, so the painter is built with it. */
+export function setCostumeTint(hex: string): void {
+  activeTint = hex;
+}
+
 export async function activateCostumeOverlay(costumeId: string): Promise<string[]> {
   if (!costumeId) {
     activeCostumeId = "";
     activeViews = new Map();
+    activeAnchor = null;
+    setCostumePainter(null, "");
     composites = new WeakMap();
     overlayEpochValue += 1;
     return [];
   }
   const payload = await invoke<CostumeVisualsPayload>("get_costume_visuals", { costumeId });
-  const loaded = new Map<string, Map<string, LoadedLayer>>();
+  const loaded = new Map<string, LoadedLayer[]>();
   await Promise.all(
-    Object.entries(payload.views).flatMap(([view, variants]) =>
-      Object.entries(variants).map(async ([variant, layer]) => {
-        let viewLayers = loaded.get(view);
-        if (!viewLayers) {
-          viewLayers = new Map();
-          loaded.set(view, viewLayers);
-        }
-        viewLayers.set(variant, {
+    Object.entries(payload.views).map(async ([view, layers]) => {
+      // Manifest order is draw order, so the images are awaited together but
+      // written back by index: a blazer must not end up on top of its lapels
+      // because one PNG happened to decode first.
+      const decoded = await Promise.all(
+        layers.map(async (layer) => ({
           image: await loadImage(layer.dataUrl),
+          variant: layer.variant,
+          anchor: layer.anchor,
           offsetX: layer.offsetX,
           offsetY: layer.offsetY,
           scale: layer.scale,
           opacity: layer.opacity,
-        });
-      }),
-    ),
+        })),
+      );
+      loaded.set(view, decoded);
+    }),
   );
   activeCostumeId = payload.costumeId;
   activeViews = loaded;
+  activeAnchor = payload.anchor;
+  // Procedural costumes paint inside the sprite; everything else is composited
+  // over the finished frame by composeCostumeSprite below. The cache key
+  // carries the colour as well as the costume: renderFrame caches by pose, so
+  // a colour change with an unchanged key would leave every already-drawn
+  // frame in the old colour.
+  const procedural = PROCEDURAL[payload.costumeId];
+  if (procedural) {
+    const { painter, key } = procedural(activeTint);
+    setCostumePainter(painter, key);
+  } else {
+    setCostumePainter(null, payload.costumeId);
+  }
   composites = new WeakMap();
   overlayEpochValue += 1;
   return payload.supportedBodies;
@@ -91,10 +174,78 @@ export function activeCostume(): string {
   return activeCostumeId;
 }
 
-function variantAt(now: number, variants: Map<string, LoadedLayer>): ArmorVariant {
-  const maskOpen = variants.has("maskOpen") && now % 10_000 >= 7_600;
-  const eyeGlow = !maskOpen && variants.has("eyeGlow") && now % 4_700 >= 3_950;
+function variantAt(now: number, layers: LoadedLayer[]): ArmorVariant {
+  const has = (v: string) => layers.some((l) => l.variant === v);
+  const maskOpen = has("maskOpen") && now % 10_000 >= 7_600;
+  const eyeGlow = !maskOpen && has("eyeGlow") && now % 4_700 >= 3_950;
   return maskOpen ? "maskOpen" : eyeGlow ? "eyeGlow" : "base";
+}
+
+/**
+ * Draw one layer onto the sprite, mapped from where the artist assumed the body
+ * was to where it actually is this frame.
+ *
+ * The whole point of the anchor system: the torso travels from (17.5, 34.5)
+ * with a half-height of 7.0 when standing to (19, 40) with 4.2 when lying, and
+ * a chonk's is 1.3x wider again. Rather than ask an artist for a drawing per
+ * pose per species, the art is drawn once against a reference body and squeezed
+ * onto the real one.
+ */
+function drawAnchored(
+  ctx: CanvasRenderingContext2D,
+  layer: LoadedLayer,
+  pose: PoseSpec,
+  size: number,
+): void {
+  const reference =
+    activeAnchor && (layer.anchor === "torso" || layer.anchor === "head")
+      ? (layer.anchor === "torso" ? activeAnchor.torso : activeAnchor.head)[pose.view] ??
+        (layer.anchor === "torso" ? activeAnchor.torso : activeAnchor.head).front
+      : undefined;
+
+  ctx.save();
+  ctx.globalAlpha = layer.opacity;
+
+  if (!reference || reference.rx <= 0 || reference.ry <= 0) {
+    // "sprite" anchoring, or a costume with no anchor data: the pre-anchor
+    // behaviour, centred on the frame. Every schema-1 package lands here.
+    const width = size * layer.scale;
+    const height = size * layer.scale;
+    ctx.drawImage(
+      layer.image,
+      (size - width) / 2 + layer.offsetX,
+      (size - height) / 2 + layer.offsetY,
+      width,
+      height,
+    );
+    ctx.restore();
+    return;
+  }
+
+  const design = activeAnchor?.designSize || 48;
+  const unit = size / design;
+  const live = bodyAnchors(pose);
+  const target: BodyEllipse = layer.anchor === "torso" ? live.torso : live.head;
+
+  // Map the reference ellipse onto the live one. Following the torso's position
+  // and overall size is what makes a garment look worn; following its exact
+  // aspect is what makes it look broken - a lying cat's torso is 12.5 x 4.2
+  // against a standing 9.6 x 7.0, which squashes a jacket into a slab. So the
+  // anisotropy is bounded around the uniform scale that preserves area.
+  let sx = target.rx / reference.rx;
+  let sy = target.ry / reference.ry;
+  const limit = activeAnchor?.maxAspect ?? 1.15;
+  if (limit > 1 && sx > 0 && sy > 0) {
+    const uniform = Math.sqrt(sx * sy);
+    sx = Math.min(Math.max(sx, uniform / limit), uniform * limit);
+    sy = Math.min(Math.max(sy, uniform / limit), uniform * limit);
+  }
+
+  ctx.translate((target.x + layer.offsetX) * unit, (target.y + layer.offsetY) * unit);
+  ctx.scale(sx * layer.scale, sy * layer.scale);
+  ctx.translate(-reference.x * unit, -reference.y * unit);
+  ctx.drawImage(layer.image, 0, 0, size, size);
+  ctx.restore();
 }
 
 /**
@@ -103,9 +254,9 @@ function variantAt(now: number, variants: Map<string, LoadedLayer>): ArmorVarian
  */
 export function costumeOverlayFrame(now = performance.now()): string {
   if (!activeCostumeId) return "";
-  const variants = activeViews.get("front") ?? activeViews.get("all");
-  if (!variants) return "";
-  return variantAt(now, variants);
+  const layers = activeViews.get("front") ?? activeViews.get("all");
+  if (!layers) return "";
+  return variantAt(now, layers);
 }
 
 function polygon(
@@ -496,15 +647,18 @@ export function composeCostumeSprite(
     activeViews.get(view) ??
     (view === "threeQuarter" ? activeViews.get("front") : undefined) ??
     activeViews.get("all");
-  if (!viewLayers) return base;
+  if (!viewLayers || viewLayers.length === 0) return base;
   const variant = variantAt(performance.now(), viewLayers);
-  const layer = viewLayers.get(variant) ?? viewLayers.get("base");
-  if (!layer) return base;
+
   let byView = composites.get(base);
   if (!byView) {
     byView = new Map();
     composites.set(base, byView);
   }
+  // Keyed by view+variant only, deliberately. The cache is a WeakMap on the
+  // BASE sprite, and the base sprite is already cached per distinct pose - so
+  // one base canvas implies one set of anchors, and the pose cannot vary
+  // underneath a cache hit.
   const cacheKey = `${view}:${variant}`;
   const cached = byView.get(cacheKey);
   if (cached) return cached;
@@ -515,6 +669,16 @@ export function composeCostumeSprite(
     return armored;
   }
 
+  // A procedural costume is painted INSIDE the sprite, so by the time a frame
+  // reaches here it is already dressed. Compositing the package art again
+  // would put a second garment on top of the paws and props the first pass
+  // deliberately stayed behind.
+  if (PROCEDURAL[activeCostumeId]) return base;
+
+  // Everything for this variant, plus anything variant-less that always shows.
+  const drawn = viewLayers.filter((l) => l.variant === variant || l.variant === "base");
+  if (drawn.length === 0) return base;
+
   const canvas = document.createElement("canvas");
   canvas.width = base.width;
   canvas.height = base.height;
@@ -522,12 +686,7 @@ export function composeCostumeSprite(
   if (!ctx) return base;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(base, 0, 0);
-  const width = canvas.width * layer.scale;
-  const height = canvas.height * layer.scale;
-  const x = (canvas.width - width) / 2 + layer.offsetX;
-  const y = (canvas.height - height) / 2 + layer.offsetY;
-  ctx.globalAlpha = layer.opacity;
-  ctx.drawImage(layer.image, x, y, width, height);
+  for (const layer of drawn) drawAnchored(ctx, layer, pose, canvas.width);
   byView.set(cacheKey, canvas);
   return canvas;
 }

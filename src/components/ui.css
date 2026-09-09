@@ -2143,20 +2143,33 @@ select.sk-input {
   justify-content: space-between;
   align-items: flex-start;
 }
-.costume-coming-soon {
-  display: inline-block;
-  margin-left: 7px;
-  padding: 2px 7px;
-  border: 1px solid rgba(200, 169, 97, 0.38);
-  border-radius: 999px;
-  color: var(--sk-accent);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  vertical-align: 1px;
-}
 .costume-manager-actions,
+/* Jacket colour swatches, for costumes that offer a choice. */
+.costume-colours {
+  display: flex;
+  gap: 5px;
+  padding: 2px 0 6px;
+}
+.costume-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--sk-line);
+  cursor: pointer;
+  padding: 0;
+  /* The swatch IS the colour, so it carries no label - the ring is the only
+     thing that has to say which one is chosen. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.costume-swatch.on {
+  border-color: var(--sk-ink);
+  box-shadow: 0 0 0 2px var(--sk-accent);
+}
+.costume-swatch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .costume-item-actions {
   display: flex;
   flex-wrap: wrap;

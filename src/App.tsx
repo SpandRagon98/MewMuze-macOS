@@ -69,7 +69,7 @@ import { buildPlatforms, monitorAt } from "./physics/platformResolver";
 import { loadSettings, saveSettings, sanitizeSettings, type Settings } from "./settings/settingsStore";
 import { ACTIVITY_PROFILES, DEFAULT_SETTINGS, SIZE_TO_LOGICAL_PX } from "./settings/defaultSettings";
 import { clearSpriteCache, configureAppearance, setSpriteCacheLimit } from "./animation/spriteLoader";
-import { activateCostumeOverlay } from "./costumes/costumeOverlay";
+import { activateCostumeOverlay, setCostumeTint } from "./costumes/costumeOverlay";
 import { CostumeInstallPanel } from "./costumes/CostumeInstallPanel";
 import { resolveLicenseState, type LicenseState } from "./licensing/license";
 import { FrameBudget, setQualityLevel, CACHE_LIMIT as QUALITY_CACHE_LIMIT, type QualityLevel } from "./perf/quality";
@@ -510,6 +510,7 @@ export default function App() {
       /** What the running app actually obeys (user settings after gating). */
       let effective: Settings = gated(current);
       configureAppearance(effective.appearance);
+      setCostumeTint(effective.costumeTint);
       void activateCostumeOverlay(effective.selectedCostumeId).catch(() => activateCostumeOverlay(""));
 
       /**
@@ -524,6 +525,7 @@ export default function App() {
       const regate = () => {
         effective = gated(current);
         configureAppearance(effective.appearance);
+        setCostumeTint(effective.costumeTint);
         void activateCostumeOverlay(effective.selectedCostumeId).catch(() =>
           activateCostumeOverlay(""),
         );
@@ -886,7 +888,13 @@ export default function App() {
         const eff = gated(next);
         effective = eff;
         if (next.appearance !== prev.appearance || !license.premium) configureAppearance(eff.appearance);
-        if (next.selectedCostumeId !== prev.selectedCostumeId) {
+        if (
+          next.selectedCostumeId !== prev.selectedCostumeId ||
+          next.costumeTint !== prev.costumeTint
+        ) {
+          // Re-activating rebuilds the painter around the new colour and moves
+          // the sprite cache key with it.
+          setCostumeTint(eff.costumeTint);
           void activateCostumeOverlay(eff.selectedCostumeId).catch(() => activateCostumeOverlay(""));
         }
         if (next.uiTheme !== prev.uiTheme) applyTheme(next.uiTheme);

@@ -25,6 +25,10 @@ const STORE_PUBLIC_KEY_B64: &str = "wwMcM8TiKB+J7F0Hv5PJsty7vMlI+O8IvxDAd405sCc=
 const MECHA_KEY_ID: &str = "store-key-mecha-2026-01";
 const MECHA_PUBLIC_KEY_B64: &str = "6XP8hsa3OEULR2QuDpb/k3LPv6doVIsJBrgBp6bH8cc=";
 const MECHA_V2_KEY_ID: &str = "store-key-mecha-2026-02";
+/// Signs the first-party anchored costumes. Its private half lives in the
+/// separate costume workspace and never ships.
+const COSTUME_KEY_ID: &str = "store-key-costume-2026-01";
+const COSTUME_PUBLIC_KEY_B64: &str = "WDivgB+TbxgAZjDnsW5JuYURWfS8/PEY4Rpb/btjguk=";
 const MECHA_V2_PUBLIC_KEY_B64: &str = "gvdmBxGcLM99o/vAWCQb2zxtVyWPiS+sbcDn1QY/7Jk=";
 const MAX_PACKAGE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 32 * 1024 * 1024;
@@ -42,6 +46,10 @@ pub struct CostumeAsset {
     pub layer: String,
     #[serde(default = "default_variant")]
     pub variant: String,
+    /// Which body mass this piece rides: "torso", "head", or "sprite" for
+    /// the legacy behaviour of pinning it to the frame. Absent = "sprite".
+    #[serde(default)]
+    pub anchor: Option<String>,
     #[serde(default)]
     pub offset_x: i32,
     #[serde(default)]
@@ -84,6 +92,44 @@ pub struct CostumeManifest {
     pub package_size: u64,
     pub license_id: String,
     pub signature_key_id: String,
+    /// Reference geometry the art was drawn against. Required by schema 2.
+    #[serde(default)]
+    pub anchor: Option<CostumeAnchorSpec>,
+}
+
+/// One body mass in the costume's own design space.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AnchorEllipse {
+    pub x: f32,
+    pub y: f32,
+    pub rx: f32,
+    pub ry: f32,
+}
+
+/// Where the artwork assumed the body was.
+///
+/// The app knows where the torso and head REALLY are for the current pose,
+/// so knowing where the artist assumed they were is enough to map one onto
+/// the other. That mapping is what lets a single image fit a sitting kitten
+/// and a lying chonk without the artist drawing either.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CostumeAnchorSpec {
+    pub space: String,
+    pub design_size: f32,
+    /// How far the garment may be stretched out of its drawn proportions when
+    /// the body it rides is a different shape. 1.0 keeps it perfectly
+    /// proportional; the default lets it flex a little so it still reads as
+    /// clothing rather than a decal.
+    #[serde(default = "default_max_aspect")]
+    pub max_aspect: f32,
+    // Both default to empty: a costume that only dresses the torso has no
+    // reason to describe a head, and vice versa.
+    #[serde(default)]
+    pub torso: BTreeMap<String, AnchorEllipse>,
+    #[serde(default)]
+    pub head: BTreeMap<String, AnchorEllipse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,13 +176,19 @@ pub struct InstalledCostumeView {
 pub struct CostumeVisuals {
     pub costume_id: String,
     pub supported_bodies: Vec<String>,
-    pub views: BTreeMap<String, BTreeMap<String, CostumeVisualLayer>>,
+    /// Every layer for a view, in manifest order. A list rather than a map
+    /// keyed by variant: a costume is often several garments at once (a
+    /// blazer AND spectacles), and keying by variant collapsed them to one.
+    pub views: BTreeMap<String, Vec<CostumeVisualLayer>>,
+    pub anchor: Option<CostumeAnchorSpec>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CostumeVisualLayer {
     pub data_url: String,
+    pub variant: String,
+    pub anchor: String,
     pub offset_x: i32,
     pub offset_y: i32,
     pub scale: f32,
@@ -277,11 +329,16 @@ fn read_zip_entry<R: Read + std::io::Seek>(
     Ok(data)
 }
 
+fn default_max_aspect() -> f32 {
+    1.15
+}
+
 fn store_public_key(key_id: &str) -> Option<&'static str> {
     match key_id {
         STORE_KEY_ID => Some(STORE_PUBLIC_KEY_B64),
         MECHA_KEY_ID => Some(MECHA_PUBLIC_KEY_B64),
         MECHA_V2_KEY_ID => Some(MECHA_V2_PUBLIC_KEY_B64),
+        COSTUME_KEY_ID => Some(COSTUME_PUBLIC_KEY_B64),
         _ => None,
     }
 }
@@ -310,8 +367,25 @@ fn verify_signature(data: &[u8], encoded: &[u8], label: &str, key_id: &str) -> R
 }
 
 fn validate_manifest(manifest: &CostumeManifest, package_len: u64) -> Result<(), String> {
-    if manifest.schema_version != 1 {
+    // 1 = a flat overlay centred on the sprite. 2 adds anchors, so a garment
+    // can follow the torso and head through every pose and species. Both are
+    // accepted: a v1 package installed before the update must keep working.
+    if !matches!(manifest.schema_version, 1 | 2) {
         return Err("This costume uses an unsupported manifest version.".into());
+    }
+    if manifest.schema_version >= 2 && manifest.anchor.is_none() {
+        return Err("This costume declares schema 2 but carries no anchor data.".into());
+    }
+    if let Some(anchor) = &manifest.anchor {
+        // An unbounded or nonsensical value would let a package smear its art
+        // across the whole sprite, so it is range-checked like every other
+        // number that reaches the renderer.
+        if !anchor.max_aspect.is_finite() || !(1.0..=3.0).contains(&anchor.max_aspect) {
+            return Err("The costume anchor has an invalid maxAspect.".into());
+        }
+        if !anchor.design_size.is_finite() || !(8.0..=512.0).contains(&anchor.design_size) {
+            return Err("The costume anchor has an invalid designSize.".into());
+        }
     }
     if !valid_id(&manifest.id) {
         return Err("The costume ID is invalid.".into());
@@ -370,6 +444,10 @@ fn validate_manifest(manifest: &CostumeManifest, package_len: u64) -> Result<(),
             || !matches!(asset.view.as_str(), "front" | "side" | "back" | "all")
             || asset.layer != "overlay"
             || !matches!(asset.variant.as_str(), "base" | "maskOpen" | "eyeGlow")
+            || !matches!(
+                asset.anchor.as_deref().unwrap_or("sprite"),
+                "sprite" | "torso" | "head"
+            )
             || !asset.scale.is_finite()
             || !(0.25..=4.0).contains(&asset.scale)
             || !asset.opacity.is_finite()
@@ -379,7 +457,15 @@ fn validate_manifest(manifest: &CostumeManifest, package_len: u64) -> Result<(),
         {
             return Err(format!("The visual layer {} is invalid.", asset.path));
         }
-        if !layers.insert((asset.view.as_str(), asset.variant.as_str())) {
+        // Keyed by anchor as well as view+variant. A blazer rides the torso and
+        // spectacles ride the head, so both are legitimately "side"/"base";
+        // without the anchor in the key the second one is refused as a
+        // duplicate. Two layers on the SAME body part are still a mistake.
+        if !layers.insert((
+            asset.view.as_str(),
+            asset.variant.as_str(),
+            asset.anchor.as_deref().unwrap_or("sprite"),
+        )) {
             return Err(format!(
                 "The package contains more than one {} {} visual layer.",
                 asset.view, asset.variant
@@ -645,25 +731,30 @@ pub fn get_costume_visuals(app: AppHandle, costume_id: String) -> Result<Costume
         .ok_or_else(|| "That costume is not installed or is disabled.".to_string())?;
     let location = PathBuf::from(&installed.local_package_location);
     let manifest = read_manifest_from_install(&location)?;
-    let mut views: BTreeMap<String, BTreeMap<String, CostumeVisualLayer>> = BTreeMap::new();
+    let mut views: BTreeMap<String, Vec<CostumeVisualLayer>> = BTreeMap::new();
     for asset in &manifest.assets {
         let url = data_url(&location.join(&asset.path))
             .ok_or_else(|| format!("MewMuze could not load {}.", asset.path))?;
-        views.entry(asset.view.clone()).or_default().insert(
-            asset.variant.clone(),
-            CostumeVisualLayer {
+        views
+            .entry(asset.view.clone())
+            .or_default()
+            .push(CostumeVisualLayer {
                 data_url: url,
+                variant: asset.variant.clone(),
+                // A v1 package has no anchors, so its art stays pinned to the
+                // frame exactly as it was before this feature existed.
+                anchor: asset.anchor.clone().unwrap_or_else(|| "sprite".to_string()),
                 offset_x: asset.offset_x,
                 offset_y: asset.offset_y,
                 scale: asset.scale,
                 opacity: asset.opacity,
-            },
-        );
+            });
     }
     Ok(CostumeVisuals {
         costume_id,
         supported_bodies: manifest.supported_bodies,
         views,
+        anchor: manifest.anchor,
     })
 }
 
@@ -890,6 +981,70 @@ mod tests {
         let registry = CostumeRegistry { costumes };
         assert!(!has_install_capacity(&registry, "mewmuze.sixth"));
         assert!(has_install_capacity(&registry, "mewmuze.test-3"));
+    }
+
+    /// A costume is often several garments at once. The uniqueness rule used to
+    /// key on (view, variant) alone, which refused a jacket and a pair of
+    /// spectacles on the same view - the exact shape of the first real costume.
+    #[test]
+    fn accepts_one_layer_per_body_part_and_still_rejects_duplicates() {
+        let asset = |path: &str, view: &str, anchor: &str| CostumeAsset {
+            path: path.to_string(),
+            view: view.to_string(),
+            layer: "overlay".to_string(),
+            variant: "base".to_string(),
+            anchor: Some(anchor.to_string()),
+            offset_x: 0,
+            offset_y: 0,
+            scale: 1.0,
+            opacity: 1.0,
+        };
+        let base = |assets: Vec<CostumeAsset>| {
+            let mut hashes = BTreeMap::new();
+            for a in &assets {
+                hashes.insert(a.path.clone(), "x".repeat(64));
+            }
+            hashes.insert("thumbnail.png".to_string(), "x".repeat(64));
+            hashes.insert("preview.png".to_string(), "x".repeat(64));
+            CostumeManifest {
+                schema_version: 1,
+                id: "mewmuze.test.v1".to_string(),
+                name: "Test".to_string(),
+                version: "1.0.0".to_string(),
+                creator: "Test".to_string(),
+                description: String::new(),
+                category: "test".to_string(),
+                supported_bodies: vec!["classic".to_string()],
+                minimum_app_version: "0.1.0".to_string(),
+                maximum_app_version: None,
+                thumbnail: "thumbnail.png".to_string(),
+                preview: "preview.png".to_string(),
+                assets,
+                asset_hashes: hashes,
+                package_size: 0,
+                license_id: "test".to_string(),
+                signature_key_id: STORE_KEY_ID.to_string(),
+                anchor: None,
+            }
+        };
+
+        // A jacket on the torso and specs on the head: allowed.
+        let ok = base(vec![
+            asset("assets/blazer-side.png", "side", "torso"),
+            asset("assets/specs-side.png", "side", "head"),
+        ]);
+        assert!(validate_manifest(&ok, 1024).is_ok());
+
+        // Two things on the SAME body part is still a packaging mistake.
+        let clash = base(vec![
+            asset("assets/a.png", "side", "torso"),
+            asset("assets/b.png", "side", "torso"),
+        ]);
+        assert!(validate_manifest(&clash, 1024).is_err());
+
+        // An unknown anchor must be refused rather than silently ignored.
+        let bogus = base(vec![asset("assets/a.png", "side", "elbow")]);
+        assert!(validate_manifest(&bogus, 1024).is_err());
     }
 
     #[test]

@@ -2,6 +2,23 @@ import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { Settings } from "../settings/settingsStore";
 import {
+  CYBERPUNK_CAT_ID,
+  CYBERPUNK_COLOURS,
+  DEFAULT_CYBERPUNK_COLOUR,
+} from "./cyberpunkCat";
+import { BATCAT_ID, BATCAT_COLOURS, DEFAULT_BATCAT_COLOUR } from "./batCat";
+
+/**
+ * Costumes that let the customer pick a colour, and what they offer.
+ *
+ * A table rather than a chain of id checks: the second costume to want
+ * swatches is where that chain starts going stale.
+ */
+const TINTABLE: Record<string, { colours: ReadonlyArray<{ id: string; label: string; hex: string }>; fallback: string }> = {
+  [CYBERPUNK_CAT_ID]: { colours: CYBERPUNK_COLOURS, fallback: DEFAULT_CYBERPUNK_COLOUR },
+  [BATCAT_ID]: { colours: BATCAT_COLOURS, fallback: DEFAULT_BATCAT_COLOUR },
+};
+import {
   chooseAndInstallCostume,
   listInstalledCostumes,
   openMewMuzeStore,
@@ -135,6 +152,26 @@ export function CostumeManager({
                 <span>v{costume.version} · {costume.creator}</span>
                 <span>{costume.signatureStatus === "verified" ? "Signature verified" : costume.signatureStatus}</span>
               </div>
+              {TINTABLE[costume.costumeId] && (
+                <div className="costume-colours" role="group" aria-label="Costume colour">
+                  {TINTABLE[costume.costumeId].colours.map((c) => {
+                    const active =
+                      (settings.costumeTint || TINTABLE[costume.costumeId].fallback) === c.hex;
+                    return (
+                      <button
+                        key={c.id}
+                        className={`costume-swatch${active ? " on" : ""}`}
+                        style={{ background: c.hex }}
+                        aria-label={c.label}
+                        aria-pressed={active}
+                        title={c.label}
+                        disabled={busy}
+                        onClick={() => onChange({ ...settings, costumeTint: c.hex })}
+                      />
+                    );
+                  })}
+                </div>
+              )}
               <div className="costume-item-actions">
                 <button
                   className="sk-btn"
