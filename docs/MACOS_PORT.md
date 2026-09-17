@@ -45,6 +45,14 @@ deployment target) and Chat needs macOS 13.3 (llama.cpp's own macOS build,
 read from the arm64 binary). The app says so instead of failing; everything
 else still runs on 10.15.
 
+### Building on a Mac
+
+`bash scripts/build-whisper-macos.sh` once (needs Xcode's command-line tools
+and CMake), then `npm run fetch:pdfium` and `npm run tauri dev` / `build` as
+before. The script stages `src-tauri/binaries/whisper-cli-<triple>`, which
+Tauri requires for the `externalBin`; it caches its build under
+`src-tauri/target/whisper-build`.
+
 ### Checking the macOS half from Windows
 
 `cargo check --target aarch64-apple-darwin` works with three local-only aids
