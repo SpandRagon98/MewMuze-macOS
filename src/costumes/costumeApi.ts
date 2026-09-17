@@ -82,3 +82,8 @@ export function clearPendingCostumeRequest(): Promise<void> {
 export function confirmInstallToken(token: string): Promise<string> {
   return invoke("confirm_install_token", { token });
 }
+
+/** Open (or refocus) the Look Preview window on a costume. Never changes what the cat wears. */
+export function openLookPreview(costumeId: string): Promise<void> {
+  return invoke("open_look_preview", { look: costumeId });
+}

@@ -1,11 +1,8 @@
-/* Calc & Time panel.
+/* Calculator & Time panel.
  *
- * Kept in its own file (as the Clipboard Assistant does) so nothing in the
- * shared ui.css has to change. The panel root also carries `.quick-tools`, so
- * surfaces, shadows, typography and the whole `.sk-light` variant are
- * INHERITED rather than restated — only genuinely new structure is styled
- * here, in the same visual language: wells recessed, controls lit from above,
- * accents drawn from the existing theme tokens. */
+ * The panel root also carries `.quick-tools`, so the surface, shadow and type
+ * come from the shared shell in ui.css. Only this panel's own structure is
+ * styled here, from the same design tokens. */
 
 .calc-tools .ct-tabs {
   display: flex;
@@ -14,36 +11,36 @@
 }
 .calc-tools .ct-tab {
   flex: 1;
-  padding: 5px 0;
+  min-height: 30px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--mm-fs-meta);
   font-weight: 500;
-  color: var(--sk-ink-dim);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 7px;
+  color: var(--mm-text-muted);
+  background: var(--mm-surface-2);
+  border: 1px solid var(--mm-border-strong);
+  border-radius: var(--mm-r-sm);
   cursor: pointer;
-  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+  transition: background var(--mm-t-fast) ease, color var(--mm-t-fast) ease, border-color var(--mm-t-fast) ease;
 }
 .calc-tools .ct-tab:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--sk-ink);
+  background: var(--mm-surface-hover);
+  color: var(--mm-text);
 }
-.calc-tools .ct-tab.active {
-  background: var(--sk-green);
-  border-color: rgba(0, 0, 0, 0.25);
-  color: #0f1a10;
+.calc-tools .ct-tab.active,
+.calc-tools .ct-chip.active {
+  color: var(--mm-text);
+  background: var(--mm-accent-soft);
+  border-color: var(--mm-accent-line);
   font-weight: 600;
 }
 
-/* Recessed display well, matching the `.qt-row select` treatment. */
+/* The display: a recessed well, the same treatment as every input. */
 .calc-tools .ct-display {
   margin: 8px 0 6px;
-  padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.26);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 8px;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.34);
+  padding: 10px 12px;
+  background: var(--mm-surface-inset);
+  border: 1px solid var(--mm-border-strong);
+  border-radius: var(--mm-r);
 }
 .calc-tools .ct-expr {
   width: 100%;
@@ -51,93 +48,86 @@
   background: transparent;
   border: none;
   outline: none;
-  color: var(--sk-ink);
+  color: var(--mm-text);
   font-family: inherit;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
   text-align: right;
-  letter-spacing: 0.01em;
 }
 .calc-tools .ct-preview {
-  min-height: 15px;
+  min-height: 16px;
   text-align: right;
-  font-size: 11.5px;
-  color: var(--sk-ink-dim);
+  font-size: var(--mm-fs-meta);
+  color: var(--mm-text-muted);
   margin-top: 3px;
 }
 .calc-tools .ct-preview.error {
-  color: #d8705f;
+  color: var(--mm-danger-ink);
 }
 
 .calc-tools .ct-keys {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 5px;
+  gap: 6px;
 }
 .calc-tools .ct-key {
-  padding: 8px 0;
+  min-height: 36px;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  color: var(--sk-ink);
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 7px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: var(--mm-text);
+  background: var(--mm-surface-raised);
+  border: 1px solid var(--mm-border-strong);
+  border-radius: var(--mm-r-sm);
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background var(--mm-t-fast) ease, transform var(--mm-t-fast) var(--mm-ease);
 }
 .calc-tools .ct-key:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.17);
+  background: var(--mm-surface-hover);
 }
 .calc-tools .ct-key:active {
-  background: rgba(0, 0, 0, 0.2);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+  transform: translateY(1px);
 }
 .calc-tools .ct-key:disabled {
   opacity: 0.4;
   cursor: default;
 }
 .calc-tools .ct-key.fn {
-  font-size: 11.5px;
-  color: var(--sk-ink-dim);
+  font-size: var(--mm-fs-small);
+  color: var(--mm-text-muted);
+  background: var(--mm-surface-2);
 }
 .calc-tools .ct-key.eq {
-  background: var(--sk-green);
-  border-color: rgba(0, 0, 0, 0.25);
-  color: #0f1a10;
+  color: var(--mm-on-accent);
+  background: var(--mm-accent);
+  border-color: transparent;
   font-weight: 600;
 }
 .calc-tools .ct-key.eq:hover {
-  background: #6dbd70;
+  background: var(--mm-accent-hover);
 }
 
 .calc-tools .ct-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
 }
 .calc-tools .ct-chip {
-  padding: 4px 9px;
+  min-height: 28px;
+  padding: 0 11px;
   font: inherit;
-  font-size: 11px;
-  color: var(--sk-ink-dim);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: var(--mm-fs-meta);
+  color: var(--mm-text-muted);
+  background: var(--mm-surface-2);
+  border: 1px solid var(--mm-border-strong);
   border-radius: 999px;
   cursor: pointer;
-  transition: background 0.14s ease, color 0.14s ease;
+  transition: background var(--mm-t-fast) ease, color var(--mm-t-fast) ease;
 }
 .calc-tools .ct-chip:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--sk-ink);
-}
-.calc-tools .ct-chip.active {
-  background: var(--sk-green);
-  border-color: rgba(0, 0, 0, 0.25);
-  color: #0f1a10;
-  font-weight: 600;
+  background: var(--mm-surface-hover);
+  color: var(--mm-text);
 }
 
 .calc-tools .ct-money {
@@ -152,72 +142,76 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  font-size: 10px;
+  gap: 4px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--sk-ink-faint);
+  color: var(--mm-text-muted);
 }
-.calc-tools .ct-input {
+.calc-tools .ct-input,
+.calc-tools .ct-convert select,
+.calc-tools .ct-zone select {
   width: 100%;
+  min-width: 0;
   box-sizing: border-box;
-  background: rgba(0, 0, 0, 0.26);
-  color: var(--sk-ink);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 7px;
-  padding: 5px 7px;
-  font-size: 12px;
+  min-height: 32px;
+  padding: 0 9px;
   font-family: inherit;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-size: var(--mm-fs-small);
+  color: var(--mm-text);
+  background: var(--mm-surface-inset);
+  border: 1px solid var(--mm-border-strong);
+  border-radius: var(--mm-r-sm);
 }
-.calc-tools .ct-input:focus {
+.calc-tools .ct-input:focus,
+.calc-tools .ct-convert select:focus,
+.calc-tools .ct-zone select:focus {
   outline: none;
-  border-color: var(--sk-green);
+  border-color: var(--mm-accent-2);
+  box-shadow: 0 0 0 3px var(--mm-accent-2-soft);
 }
 
+.calc-tools .ct-result,
+.calc-tools .ct-time-out {
+  background: var(--mm-surface-2);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-r);
+}
 .calc-tools .ct-result {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 8px;
-  padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 8px;
+  padding: 10px 12px;
 }
 .calc-tools .ct-result.big {
   margin-top: 10px;
-  padding: 12px;
+  padding: 14px;
 }
-/* Same well as a normal result, warm-tinted: this is a "check your input"
-   nudge, not a failure — the panel is still perfectly usable. */
+/* A "check your input" nudge, not a failure: the panel still works. */
 .calc-tools .ct-result-error {
-  border-color: rgba(232, 134, 46, 0.45);
+  border-color: rgba(230, 200, 92, 0.4);
 }
 .calc-tools .ct-result-error .ct-result-value {
-  font-size: 12px;
-  opacity: 0.85;
+  font-size: var(--mm-fs-small);
+  color: var(--mm-text-muted);
 }
 .calc-tools .ct-result-label {
   width: 100%;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--sk-ink-faint);
+  color: var(--mm-text-muted);
 }
 .calc-tools .ct-result-value {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  color: var(--sk-ink);
+  color: var(--mm-text);
   word-break: break-word;
 }
 .calc-tools .ct-result.big .ct-result-value {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 600;
 }
 
@@ -226,14 +220,12 @@
   background: none;
   border: none;
   font: inherit;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--sk-ink-faint);
+  font-size: 11px;
+  color: var(--mm-text-faint);
   cursor: pointer;
-  text-transform: none;
 }
 .calc-tools .ct-clear:hover {
-  color: var(--sk-ink);
+  color: var(--mm-text);
 }
 .calc-tools .ct-history {
   display: flex;
@@ -247,18 +239,18 @@
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  padding: 4px 6px;
+  padding: 5px 7px;
   background: none;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--mm-r-sm);
   font: inherit;
-  font-size: 11.5px;
-  color: var(--sk-ink-dim);
+  font-size: var(--mm-fs-meta);
+  color: var(--mm-text-muted);
   cursor: pointer;
   text-align: left;
 }
 .calc-tools .ct-hist-row:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--mm-surface-hover);
 }
 .calc-tools .ct-hist-expr {
   overflow: hidden;
@@ -267,7 +259,7 @@
 }
 .calc-tools .ct-hist-res {
   flex-shrink: 0;
-  color: var(--sk-ink);
+  color: var(--mm-text);
   font-weight: 500;
 }
 
@@ -279,37 +271,25 @@
   gap: 6px;
   padding-top: 8px;
 }
-.calc-tools .ct-convert select,
-.calc-tools .ct-zone select {
-  width: 100%;
-  min-width: 0;
-  background: rgba(0, 0, 0, 0.26);
-  color: var(--sk-ink);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 7px;
-  padding: 5px 7px;
-  font-size: 11.5px;
-  font-family: inherit;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
-}
 .calc-tools .ct-value {
   text-align: right;
   font-weight: 500;
 }
 .calc-tools .ct-swap {
-  padding: 5px 7px;
+  min-height: 32px;
+  padding: 0 9px;
   font: inherit;
-  font-size: 13px;
-  color: var(--sk-ink-dim);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 7px;
+  font-size: 14px;
+  color: var(--mm-text-muted);
+  background: var(--mm-surface-raised);
+  border: 1px solid var(--mm-border-strong);
+  border-radius: var(--mm-r-sm);
   cursor: pointer;
-  transition: background 0.14s ease, color 0.14s ease;
+  transition: background var(--mm-t-fast) ease, color var(--mm-t-fast) ease;
 }
 .calc-tools .ct-swap:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--sk-ink);
+  background: var(--mm-surface-hover);
+  color: var(--mm-text);
 }
 
 .calc-tools .ct-datetime {
@@ -319,7 +299,6 @@
 }
 .calc-tools .ct-datetime .ct-input {
   flex: 1;
-  min-width: 0;
 }
 .calc-tools .ct-zones {
   display: grid;
@@ -332,18 +311,15 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 .calc-tools .ct-zone-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--sk-ink-faint);
+  color: var(--mm-text-muted);
 }
 .calc-tools .ct-zone-search {
-  font-size: 11px;
-  padding: 4px 6px;
+  font-size: var(--mm-fs-meta);
 }
 .calc-tools .ct-mode {
   padding-top: 10px;
@@ -351,85 +327,40 @@
 
 .calc-tools .ct-time-out {
   margin-top: 10px;
-  padding: 12px;
+  padding: 14px;
   text-align: center;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 8px;
 }
 .calc-tools .ct-time-big {
-  font-size: 26px;
+  font-size: 28px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--sk-ink);
+  font-variant-numeric: tabular-nums;
+  color: var(--mm-text);
 }
 .calc-tools .ct-time-date {
   margin-top: 3px;
-  font-size: 12px;
-  color: var(--sk-ink-dim);
+  font-size: var(--mm-fs-small);
+  color: var(--mm-text-muted);
 }
-/* The rollover is the detail people get wrong, so it is called out explicitly
-   rather than left to be inferred from the date. */
+/* The day rollover is the detail people get wrong, so it is called out. */
 .calc-tools .ct-dayshift {
   display: inline-block;
   margin-left: 6px;
-  padding: 1px 7px;
-  font-size: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #0f1a10;
-  background: var(--sk-accent);
+  color: var(--mm-on-accent);
+  background: var(--mm-accent);
   border-radius: 999px;
 }
 .calc-tools .ct-time-zone {
-  margin: 5px 0 9px;
-  font-size: 10.5px;
-  color: var(--sk-ink-faint);
+  margin: 6px 0 10px;
+  font-size: var(--mm-fs-meta);
+  color: var(--mm-text-faint);
 }
 
 .calc-tools .ct-copied {
   margin-top: 8px;
   text-align: center;
-  font-size: 11px;
-  color: var(--sk-green);
-}
-
-/* Light theme: only the recessed wells need adjusting — black glass reads as a
-   hole punched in a cream surface. Everything else follows the inherited
-   `.sk-light .quick-tools` tokens automatically. */
-.sk-light .calc-tools .ct-display,
-.sk-light .calc-tools .ct-input,
-.sk-light .calc-tools .ct-convert select,
-.sk-light .calc-tools .ct-zone select {
-  background: rgba(150, 100, 45, 0.07);
-  border-color: rgba(120, 80, 30, 0.16);
-  box-shadow: inset 0 1px 2px rgba(120, 80, 30, 0.12);
-}
-.sk-light .calc-tools .ct-key,
-.sk-light .calc-tools .ct-tab,
-.sk-light .calc-tools .ct-chip,
-.sk-light .calc-tools .ct-swap {
-  background: rgba(150, 100, 45, 0.06);
-  border-color: rgba(120, 80, 30, 0.14);
-}
-.sk-light .calc-tools .ct-key:hover,
-.sk-light .calc-tools .ct-tab:hover,
-.sk-light .calc-tools .ct-chip:hover,
-.sk-light .calc-tools .ct-swap:hover {
-  background: rgba(232, 134, 46, 0.12);
-}
-.sk-light .calc-tools .ct-key.eq,
-.sk-light .calc-tools .ct-tab.active,
-.sk-light .calc-tools .ct-chip.active {
-  background: var(--sk-green);
-  color: #0f1a10;
-}
-.sk-light .calc-tools .ct-result,
-.sk-light .calc-tools .ct-time-out {
-  background: rgba(150, 100, 45, 0.06);
-  border-color: rgba(120, 80, 30, 0.12);
-}
-.sk-light .calc-tools .ct-hist-row:hover {
-  background: rgba(232, 134, 46, 0.1);
+  font-size: var(--mm-fs-meta);
+  color: var(--mm-success);
 }

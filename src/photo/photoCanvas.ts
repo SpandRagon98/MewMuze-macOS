@@ -22,7 +22,7 @@ export function photoSprite(pose: PoseSpec): HTMLCanvasElement {
   return applyAppearanceStroke(composeCostumeSprite(renderFrame(pose), pose));
 }
 
-/** Theme colours for the card, taken from the panel so it matches the app. */
+/** Card colours, from the design system so the export matches the app. */
 export interface CardTheme {
   background: string;
   edge: string;
@@ -30,10 +30,7 @@ export interface CardTheme {
   inkDim: string;
 }
 
-export const CARD_THEMES: Record<"dark" | "light", CardTheme> = {
-  dark: { background: "#1e2126", edge: "#0e1013", ink: "#eceef4", inkDim: "#9aa0b0" },
-  light: { background: "#fffaf4", edge: "#e6d5c0", ink: "#3a2e20", inkDim: "#7a6a54" },
-};
+export const CARD_THEME: CardTheme = { background: "#14161c", edge: "#0b0c10", ink: "#eef0f6", inkDim: "#a2a8b7" };
 
 function blank(width: number, height: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
   const canvas = document.createElement("canvas");
@@ -96,10 +93,10 @@ export function composeCard(
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = theme.ink;
-    ctx.font = `600 ${titleSize}px "Nunito", "Segoe UI", system-ui, sans-serif`;
+    ctx.font = `600 ${titleSize}px "Montserrat", "Segoe UI", system-ui, sans-serif`;
     ctx.fillText(BRAND_TITLE, layout.width / 2, layout.footerY);
     ctx.fillStyle = theme.inkDim;
-    ctx.font = `400 ${urlSize}px "Nunito", "Segoe UI", system-ui, sans-serif`;
+    ctx.font = `400 ${urlSize}px "Montserrat", "Segoe UI", system-ui, sans-serif`;
     ctx.fillText(BRAND_URL, layout.width / 2, layout.footerY + Math.round(urlSize * 1.5));
   }
 

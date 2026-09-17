@@ -3,8 +3,10 @@ import type { RenderInfo } from "../engine/catEngine";
 import { COLS as MESH_COLS, ROWS as MESH_ROWS } from "../physics/mochiMesh";
 import {
   applyAppearanceStroke,
+  ART,
   renderFrame,
   spriteEpoch,
+  poseKey,
   DEFAULT_POSE,
   type PoseSpec,
 } from "../animation/spriteLoader";
@@ -13,6 +15,7 @@ import {
   costumeOverlayEpoch,
   costumeOverlayFrame,
 } from "../costumes/costumeOverlay";
+import type { ButterflyFrame } from "../emotion/butterfly";
 
 /**
  * A single full-overlay <canvas>. Everything except the cat is transparent.
@@ -27,7 +30,7 @@ export interface CatRendererHandle {
    * Draw one frame. `visibility` (0..1) drives the Cat On/Off entrance and exit
    * transitions: the sprite fades and shrinks toward its feet as it goes to 0.
    */
-  draw(render: RenderInfo | null, physicalWidth: number, physicalHeight: number, visibility?: number): void;
+  draw(render: RenderInfo | null, physicalWidth: number, physicalHeight: number, visibility?: number, butterfly?: ButterflyFrame | null): void;
 }
 
 /**
@@ -158,8 +161,11 @@ function drawCatSprite(
   // the cat leans toward the real cursor, not away from it.
   scratchPose.headTurnX = sideFlip ? -render.headTurnX : render.headTurnX;
   scratchPose.headTurnY = render.headTurnY;
-  const sprite = applyAppearanceStroke(composeCostumeSprite(renderFrame(scratchPose), scratchPose));
   const size = render.sizePx;
+  // Rasterised at the size it is shown, so the blit below is 1:1 and no row of
+  // the outline is dropped. Capped at ART, the measured cost ceiling: above it
+  // (a large cat on a high-DPI screen) the 128 px frame is scaled up as before.
+  const sprite = applyAppearanceStroke(composeCostumeSprite(renderFrame(scratchPose, Math.min(ART, size)), scratchPose));
 
   // Landing squash (wider + shorter) and the on/off transition scale.
   const scaleX = (1 + render.squash * 0.22) * (0.4 + 0.6 * visibility);
@@ -262,6 +268,52 @@ function drawCatSprite(
   return dirty;
 }
 
+/** The butterfly, top view, one art pixel per cell: o wing, d edge, w spot, b body/antennae. */
+const BUTTERFLY_ART = [
+  "...b...b...",
+  "....b.b....",
+  "dd...b...dd",
+  "dood.b.dood",
+  "doooobooood",
+  "dowooboowod",
+  ".doo.b.ood.",
+  "..dd.b.dd..",
+  ".....b.....",
+];
+const BUTTERFLY_INK: Record<string, string> = { o: "#ff9d3b", d: "#3b2a20", w: "#fff6e0", b: "#2b1d16" };
+let butterflyArt: HTMLCanvasElement | null = null;
+
+/**
+ * A wing beat is the same art squeezed toward the body (open, half, edge-on),
+ * so there is one tiny sprite, built once.
+ */
+export function drawButterfly(ctx: CanvasRenderingContext2D, b: ButterflyFrame): DirtyRect {
+  if (!butterflyArt) {
+    butterflyArt = document.createElement("canvas");
+    butterflyArt.width = 11;
+    butterflyArt.height = BUTTERFLY_ART.length;
+    const g = butterflyArt.getContext("2d")!;
+    BUTTERFLY_ART.forEach((row, y) => [...row].forEach((c, x) => {
+      if (c === ".") return;
+      g.fillStyle = BUTTERFLY_INK[c];
+      g.fillRect(x, y, 1, 1);
+    }));
+  }
+  const s = b.scale;
+  const h = BUTTERFLY_ART.length * s;
+  const wing = Math.max(s, Math.round(5 * s * (b.wing === 0 ? 1 : b.wing === 1 ? 0.55 : 0.2)));
+  const bodyX = Math.round(b.x - s / 2);
+  const top = Math.round(b.y - h / 2);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(butterflyArt, 0, 0, 5, 9, bodyX - wing, top, wing, h);
+  ctx.drawImage(butterflyArt, 5, 0, 1, 9, bodyX, top, s, h);
+  ctx.drawImage(butterflyArt, 6, 0, 5, 9, bodyX + s, top, wing, h);
+  ctx.restore();
+  const half = 5 * s + s;
+  return outwardDirtyRect({ x: bodyX - half - 2, y: top - 2, w: half * 2 + s + 4, h: h + 4 });
+}
+
 export const CatRenderer = forwardRef<CatRendererHandle>(function CatRenderer(_, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Region drawn last frame. The canvas spans the whole virtual desktop, so
@@ -276,9 +328,11 @@ export const CatRenderer = forwardRef<CatRendererHandle>(function CatRenderer(_,
   // desktop, so every paint makes the compositor redo a full-screen transparent
   // surface — expensive, and pure waste when the cat is sitting perfectly still.
   const sigRef = useRef<string | null>(null);
+  // The butterfly's own region, cleared separately so the cat's stays tight.
+  const butterflyDirtyRef = useRef<DirtyRect | null>(null);
 
   useImperativeHandle(ref, () => ({
-    draw(render, w, h, visibility = 1) {
+    draw(render, w, h, visibility = 1, butterfly = null) {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
@@ -293,11 +347,13 @@ export const CatRenderer = forwardRef<CatRendererHandle>(function CatRenderer(_,
             `${render.facing}|${render.squash.toFixed(3)}|${render.pupilX}|${render.pupilY}|` +
             `${render.headTurnX}|${render.headTurnY}|` +
             `${render.tailPhase}|${meshSignature(render.mesh)}|` +
-            `${vis.toFixed(3)}|${render.pose.view}|${render.pose.body}|` +
-            `${render.pose.legPhase}|${render.pose.eyes}|${render.pose.ears}|${render.pose.tail}|` +
-            `${render.pose.headBob}|${render.pose.gesture}|${render.pose.mouth}|${render.pose.prop}`;
+            // Every drawn pose field, emotional ones included (tilt, brows, tears,
+            // marks): a hand-picked list here once meant a tear could fall without
+            // the canvas ever repainting.
+            `${vis.toFixed(3)}|${poseKey(render.pose)}`;
+      const bf = butterfly && sig !== "blank" ? `|${Math.round(butterfly.x)},${Math.round(butterfly.y)},${butterfly.wing},${butterfly.scale}` : "";
 
-      if (!resized && sig === sigRef.current) return; // nothing moved: don't touch the canvas
+      if (!resized && sig + bf === sigRef.current) return; // nothing moved: don't touch the canvas
 
       const meshJustEnded = meshActiveRef.current && !render?.mesh;
       if (resized) {
@@ -308,16 +364,18 @@ export const CatRenderer = forwardRef<CatRendererHandle>(function CatRenderer(_,
       } else if (!render || vis <= 0.01 || meshJustEnded) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         dirtyRef.current = null;
-      } else if (dirtyRef.current) {
-        const d = dirtyRef.current;
-        ctx.clearRect(d.x, d.y, d.w, d.h);
+        butterflyDirtyRef.current = null;
+      } else {
+        for (const d of [dirtyRef.current, butterflyDirtyRef.current]) if (d) ctx.clearRect(d.x, d.y, d.w, d.h);
         dirtyRef.current = null;
+        butterflyDirtyRef.current = null;
       }
       if (render && vis > 0.01) {
         dirtyRef.current = drawCatSprite(ctx, render, vis);
+        if (butterfly) butterflyDirtyRef.current = drawButterfly(ctx, butterfly);
       }
       meshActiveRef.current = Boolean(render?.mesh);
-      sigRef.current = sig;
+      sigRef.current = sig + bf;
     },
   }));
 

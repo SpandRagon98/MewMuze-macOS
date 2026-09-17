@@ -19,10 +19,13 @@ import {
 } from "../quicktools/convert";
 import { placePanel, type Area, type Box } from "../quicktools/panelPlacement";
 import { SpreadsheetTools } from "./SpreadsheetTools";
+import { Icon } from "./icons";
 
 // Width is exact (box-sizing: border-box); height is measured with the status
 // slot reserved, so the layout-effect re-place below is a no-op in practice.
 export const PANEL_SIZE = { width: 306, height: 470 };
+/** The tools themselves: wide enough that a row of controls stops wrapping. */
+export const TOOL_PANEL_SIZE = { width: 462, height: 560 };
 
 type Busy = null | "images" | "pdf" | "merge" | "split";
 
@@ -68,9 +71,9 @@ export function ThunderStrike({ x, y, size }: { x: number; y: number; size: numb
     for (let r = 0; r < BOLT_H; r++) {
       for (let c = 0; c < BOLT_W; c++) {
         if (BOLT_GRID[r][c] === "1") {
-          // Bright core with a one-pixel darker-gold outline for definition.
+          // Icy core with a one-pixel teal outline for definition.
           const edge = r === 0 || r === BOLT_H - 1;
-          ctx.fillStyle = edge ? "#f5c542" : "#fff6c8";
+          ctx.fillStyle = edge ? "#5fd3e3" : "#e6fbff";
           ctx.fillRect(c, r, 1, 1);
         }
       }
@@ -122,6 +125,7 @@ export function QuickToolsPanel({
   // wanders would make the panel skitter around under the pointer. The cat is
   // parked while the panel is open anyway.
   const boxRef = useRef<HTMLDivElement>(null);
+  const size = view === "menu" ? PANEL_SIZE : TOOL_PANEL_SIZE;
   const [placement, setPlacement] = useState(() => placePanel({ cat, panel: PANEL_SIZE, area }));
 
   // PANEL_SIZE is only an estimate — fonts, wrapping and the platform's
@@ -132,12 +136,12 @@ export function QuickToolsPanel({
     const el = boxRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    if (Math.abs(r.width - PANEL_SIZE.width) > 2 || Math.abs(r.height - PANEL_SIZE.height) > 2) {
+    if (Math.abs(r.width - size.width) > 2 || Math.abs(r.height - size.height) > 2) {
       setPlacement(placePanel({ cat, panel: { width: r.width, height: r.height }, area }));
     }
     // `view` matters: the menu, PDF and spreadsheet views are different
-    // heights, so a switch has to re-place against the box that just rendered.
-  }, [cat, area, view]);
+    // sizes, so a switch has to re-place against the box that just rendered.
+  }, [cat, area, view, size]);
 
   useEffect(() => {
     let alive = true;
@@ -270,9 +274,9 @@ export function QuickToolsPanel({
   return (
     <div
       ref={boxRef}
-      className="quick-tools pixel-ui"
+      className={`quick-tools pixel-ui${view === "menu" ? "" : " qt-tools"}`}
       data-side={placement.side}
-      style={{ left: placement.x, top: placement.y, width: PANEL_SIZE.width }}
+      style={{ left: placement.x, top: placement.y, width: size.width }}
       onPointerDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => {
         // Suppress both the cat's menu and the webview's own default menu.
@@ -282,7 +286,9 @@ export function QuickToolsPanel({
     >
       <div className="qt-head">
         {view === "menu" ? (
-          <span className="qt-title">⚡ Quick Tools</span>
+          <span className="qt-title">
+            <Icon name="bolt" size={18} /> Quick Tools
+          </span>
         ) : (
           <button
             className="qt-back"
@@ -290,12 +296,12 @@ export function QuickToolsPanel({
             title="Back to Quick Tools"
             aria-label="Back to Quick Tools"
           >
-            <span aria-hidden="true">←</span>
+            <Icon name="chevronLeft" size={16} />
             {view === "pdf" ? "PDF Tools" : "Spreadsheet Tools"}
           </button>
         )}
         <button className="qt-x" onClick={onClose} title="Close">
-          ✕
+          <Icon name="close" size={16} />
         </button>
       </div>
 
@@ -303,26 +309,26 @@ export function QuickToolsPanel({
         <div className="qt-menu">
           <button className="qt-card" onClick={() => setView("pdf")}>
             <span className="qt-card-icon" aria-hidden="true">
-              📄
+              <Icon name="note" size={18} />
             </span>
             <span className="qt-card-text">
               <strong>PDF Tools</strong>
               <small>Images to PDF, export, merge, split</small>
             </span>
             <span className="qt-card-go" aria-hidden="true">
-              →
+              <Icon name="chevronRight" size={16} />
             </span>
           </button>
           <button className="qt-card" onClick={() => setView("sheets")}>
             <span className="qt-card-icon" aria-hidden="true">
-              ▦
+              <Icon name="grid" size={18} />
             </span>
             <span className="qt-card-text">
               <strong>Spreadsheet Tools</strong>
               <small>CSV and XLSX, merge, split workbook</small>
             </span>
             <span className="qt-card-go" aria-hidden="true">
-              →
+              <Icon name="chevronRight" size={16} />
             </span>
           </button>
         </div>
@@ -332,21 +338,22 @@ export function QuickToolsPanel({
 
       {view === "pdf" && (
         <>
-      <div className="qt-section">Images → PDF</div>
-      <div className="qt-row">
-        <button className="pixel-btn" onClick={onChooseImages} disabled={working}>
-          Choose images…
-        </button>
-        <span className="qt-file">{images.length ? countLabel(images.length, "image") : "none chosen"}</span>
-      </div>
-      <div className="qt-row">
-        <button className="pixel-btn primary" onClick={onMakePdf} disabled={working || images.length === 0}>
-          {label("images", "Make PDF")}
-        </button>
-        <span className="qt-hint">one image per page, in the order picked</span>
-      </div>
+      <section className="qt-group">
+        <h3 className="qt-group-head">Images → PDF</h3>
+        <div className="qt-row">
+          <button className="pixel-btn" onClick={onChooseImages} disabled={working}>
+            Choose images…
+          </button>
+          <span className="qt-file">{images.length ? countLabel(images.length, "image") : "none chosen"}</span>
+          <button className="pixel-btn primary" onClick={onMakePdf} disabled={working || images.length === 0}>
+            {label("images", "Make PDF")}
+          </button>
+        </div>
+        <div className="qt-hint">one image per page, in the order picked</div>
+      </section>
 
-      <div className="qt-section">PDF → Images</div>
+      <section className="qt-group">
+        <h3 className="qt-group-head">PDF → Images</h3>
       {support && !support.pdfRender ? (
         <div className="qt-unavailable">{support.reason}</div>
       ) : (
@@ -373,8 +380,10 @@ export function QuickToolsPanel({
           </div>
         </>
       )}
+      </section>
 
-      <div className="qt-section">Merge PDF</div>
+      <section className="qt-group">
+        <h3 className="qt-group-head">Merge PDF</h3>
       {support && !support.pdfRender ? (
         <div className="qt-unavailable">{support.reason}</div>
       ) : (
@@ -430,7 +439,7 @@ export function QuickToolsPanel({
                     title="Remove"
                     aria-label={`Remove ${baseName(p)}`}
                   >
-                    ✕
+                    <Icon name="close" size={12} />
                   </button>
                 </li>
               ))}
@@ -448,8 +457,10 @@ export function QuickToolsPanel({
           </div>
         </>
       )}
+      </section>
 
-      <div className="qt-section">Split PDF</div>
+      <section className="qt-group">
+        <h3 className="qt-group-head">Split PDF</h3>
       {support && !support.pdfRender ? (
         <div className="qt-unavailable">{support.reason}</div>
       ) : (
@@ -498,6 +509,7 @@ export function QuickToolsPanel({
           </div>
         </>
       )}
+      </section>
 
       <div className="qt-status-slot">
         {status && <div className="qt-status ok">{status}</div>}

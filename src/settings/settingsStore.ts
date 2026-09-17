@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, type Settings } from "./defaultSettings";
 import type { CatAccessory, CatPattern } from "../animation/spriteLoader";
 import { clampStackLimit } from "../integrations/mailStack";
+import { sanitizeCompanion } from "../companion/profile";
 
 /** The accessories bundled for direct user selection. */
 const DEFAULT_ACCESSORIES: CatAccessory[] = [
@@ -10,6 +11,9 @@ const DEFAULT_ACCESSORIES: CatAccessory[] = [
   "sunglasses",
   "headphones",
   "glasses",
+  "cap",
+  "earStuds",
+  "faceMask",
 ];
 const COSTUME_CATALOG_MIGRATION_VERSION = 1;
 
@@ -76,6 +80,11 @@ export function sanitizeSettings(raw: unknown): Settings {
   s.peekAuto = bool(r.peekAuto, s.peekAuto);
   s.peekManual = bool(r.peekManual, s.peekManual);
   s.drowsyAfterSec = num(r.drowsyAfterSec, s.drowsyAfterSec, 5, 3600);
+  if (r.expressionIntensity === "subtle" || r.expressionIntensity === "balanced" || r.expressionIntensity === "dramatic")
+    s.expressionIntensity = r.expressionIntensity;
+  s.edgyGestures = bool(r.edgyGestures, s.edgyGestures);
+  if (r.theme === "dark" || r.theme === "light") s.theme = r.theme;
+  s.butterflyVisits = bool(r.butterflyVisits, s.butterflyVisits);
 
   s.userName = str(r.userName, s.userName, 40);
   const note = r.note as Record<string, unknown> | undefined;
@@ -230,7 +239,6 @@ export function sanitizeSettings(raw: unknown): Settings {
   s.costumeCatalogMigrationVersion = COSTUME_CATALOG_MIGRATION_VERSION;
   s.costumeMigrationNoticePending =
     bool(r.costumeMigrationNoticePending, false) || s.costumeMigrationNoticePending;
-  if (r.uiTheme === "dark" || r.uiTheme === "light") s.uiTheme = r.uiTheme;
   // Hex only, so a hand-edited settings.json cannot inject a colour string
   // that reaches a canvas fillStyle.
   const tint = str(r.costumeTint, "", 9);
@@ -239,6 +247,7 @@ export function sanitizeSettings(raw: unknown): Settings {
   s.agentStatusFile = str(r.agentStatusFile, "", 500);
   s.licenseKey = str(r.licenseKey, "", 400);
   s.autoUpdate = bool(r.autoUpdate, s.autoUpdate);
+  s.companion = sanitizeCompanion(r.companion);
   // A first-run stamp in the future would grant an unlimited trial; clamp it.
   const firstRun = num(r.firstRunUnix, 0, 0, Number.MAX_SAFE_INTEGER);
   const nowUnix = Math.floor(Date.now() / 1000);

@@ -8,6 +8,7 @@ import panelSource from "../components/QuickToolsPanel.tsx?raw";
 // @ts-expect-error ?raw has no ambient type without vite/client in `types`.
 import sheetsSource from "../components/SpreadsheetTools.tsx?raw";
 import { isCsvPath, withExtension } from "../quicktools/sheets";
+import { PANEL_SIZE, TOOL_PANEL_SIZE } from "../components/QuickToolsPanel";
 
 // Relative to the project root, which is vitest's working directory.
 const css: string = readFileSync("src/components/ui.css", "utf8");
@@ -34,15 +35,12 @@ describe("spreadsheet path helpers", () => {
 });
 
 describe("spreadsheet tools reuse the existing visual language", () => {
-  it("styles the category cards and Back control for both themes", () => {
+  it("styles the category cards and Back control", () => {
     for (const rule of [".qt-card", ".qt-back", ".qt-preview", ".qt-sheets", ".qt-check"]) {
       expect(css, `${rule} has no dark style`).toContain(`${rule} {`);
     }
-    // Light theme is an override layer; anything with its own surface colour
-    // needs one or it renders as a dark block on the light card.
-    for (const rule of [".qt-card", ".qt-preview", ".qt-sheets"]) {
-      expect(css, `${rule} has no .sk-light override`).toContain(`.sk-light ${rule}`);
-    }
+    // MewMuze has one theme now; a stray light-theme layer would be dead CSS.
+    expect(css).not.toContain(".sk-light");
   });
 
   it("gives the tactile hover and pressed states the other controls have", () => {
@@ -54,9 +52,28 @@ describe("spreadsheet tools reuse the existing visual language", () => {
   });
 
   it("borrows Quick Tools' own classes rather than inventing a second style", () => {
-    for (const cls of ["qt-section", "qt-row", "qt-hint", "qt-file", "qt-status", "pixel-btn"]) {
+    for (const cls of ["qt-group", "qt-row", "qt-hint", "qt-file", "qt-status", "pixel-btn"]) {
       expect(sheets, `SpreadsheetTools does not use ${cls}`).toContain(cls);
     }
+  });
+
+  it("puts every job in its own labelled card", () => {
+    // One card per job, so "choose a file" always belongs to a visible box.
+    expect(sheets.match(/className="qt-group"/g) ?? []).toHaveLength(3);
+    expect(panel.match(/className="qt-group"/g) ?? []).toHaveLength(4);
+    for (const head of ["CSV ↔ XLSX Converter", "Merge Spreadsheet Files", "Split Excel Workbook"]) {
+      expect(sheets).toContain(`qt-group-head">${head}`);
+    }
+    expect(css).toContain(".qt-group {");
+    expect(css).toContain(".qt-group-head {");
+  });
+
+  it("opens the tools wider than the category menu", () => {
+    // The tools were cramped at menu width: rows wrapped and hints were cut.
+    expect(panel).toContain("TOOL_PANEL_SIZE");
+    expect(TOOL_PANEL_SIZE.width).toBeGreaterThan(PANEL_SIZE.width + 100);
+    // The tall views scroll instead of hanging off a small screen.
+    expect(css).toContain(".qt-tools {");
   });
 });
 
@@ -70,7 +87,7 @@ describe("Work Mode panel wiring", () => {
   it("re-places the panel when the view changes size", () => {
     // The menu, PDF and spreadsheet views are different heights; without this
     // the panel can overhang the work area or cover the cat after a switch.
-    expect(panel).toMatch(/\}, \[cat, area, view\]\)/);
+    expect(panel).toMatch(/\}, \[cat, area, view, size\]\)/);
   });
 
   it("still routes PDF work through the untouched convert bridge", () => {

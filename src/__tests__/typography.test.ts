@@ -5,15 +5,16 @@ import { readFileSync, existsSync } from "node:fs";
 
 // Paths are relative to the project root, which is vitest's working directory.
 const css: string = readFileSync("src/components/ui.css", "utf8");
+const allCss: string = css + readFileSync("src/components/calctime.css", "utf8") + readFileSync("src/clipboard-assistant/clipboard.css", "utf8");
 
 /**
  * Typography guards.
  *
  * jsdom does not apply stylesheets, so the resolved font of a rendered element
- * cannot be asserted here — that was verified in a browser. What these do
- * protect is the *rule*: the UI surfaces share one bundled typeface, and the
- * cat's retro dialogue (notices, notes, chips) deliberately does not. Both are
- * easy to break with a well-meaning tidy-up of the CSS.
+ * cannot be asserted here - that was verified in the real app. What these do
+ * protect is the rule: one bundled typeface, Montserrat, on every surface -
+ * menu, notices, panels and Settings alike - and a type scale with nothing
+ * too small to read. Both are easy to break with a well-meaning CSS tidy-up.
  */
 /** The declaration block for a top-level selector, up to its closing brace. */
 function block(selector: string): string {
@@ -24,62 +25,61 @@ function block(selector: string): string {
 }
 
 describe("typography", () => {
-  it("bundles the typeface instead of naming one that may not exist", () => {
-    // Naming a font without shipping it is how this UI spent months asking for
-    // Inter and silently rendering Segoe UI on every machine.
+  it("bundles Montserrat instead of naming a font that may not exist", () => {
+    // Naming a font without shipping it is how this UI once spent months
+    // asking for Inter and silently rendering Segoe UI on every machine.
     expect(css).toContain("@font-face");
-    expect(css).toContain('font-family: "Nunito"');
-    for (const file of ["nunito-latin.woff2", "nunito-latin-ext.woff2"]) {
+    expect(css).toContain('font-family: "Montserrat"');
+    for (const file of ["montserrat-latin.woff2", "montserrat-latin-ext.woff2"]) {
       expect(css, `${file} referenced`).toContain(file);
-      expect(
-        existsSync(`src/assets/fonts/${file}`) as boolean,
-        `${file} actually shipped`,
-      ).toBe(true);
+      expect(existsSync(`src/assets/fonts/${file}`) as boolean, `${file} actually shipped`).toBe(true);
     }
+    // The previous face is gone, not left half-referenced.
+    expect(allCss).not.toContain("Nunito");
   });
 
   it("serves the font token from the root so every surface resolves it", () => {
-    // Scoped to a handful of panel classes, anything outside that list got an
-    // invalid value and fell back to the browser default serif.
-    const root = block(":root");
-    expect(root).toContain("--sk-font");
-    expect(root).toContain("Nunito");
+    // The dark token set is shared with the art that stays dark in the light theme.
+    const root = block(":root,\n.mm-keep-dark,\n.mm-preview-stage");
+    expect(root).toContain("--mm-font:");
+    expect(root).toContain("Montserrat");
+    // Devanagari (Hindi chat) falls through to a Windows font, not a box.
+    expect(root).toContain("Nirmala UI");
   });
 
-  it("uses the shared token for the app's panels and menus", () => {
-    for (const selector of [".pixel-ui", ".cat-menu", ".quick-tools", ".sk-panel"]) {
-      expect(block(selector), `${selector} uses the token`).toContain("font-family: var(--sk-font)");
-    }
-  });
-
-  it("leaves every notification on the retro monospace face", () => {
-    // Deliberate product decision: the cat's dialogue is pixel-retro, the app's
-    // chrome is not. Changing these would make the notices look like the
-    // settings panel, which is exactly what was asked NOT to happen.
-    for (const selector of [".retro-notice", ".cat-note", ".pomo-chip", ".session-timer", ".break-picker"]) {
-      expect(block(selector), `${selector} stays monospace`).toContain('"Courier New"');
-      expect(block(selector), `${selector} must not take the UI font`).not.toContain("var(--sk-font)");
+  it("puts every surface on the one typeface - the cat's notices included", () => {
+    for (const selector of [".pixel-ui", ".mm-menu", ".quick-tools", ".mm-settings", ".retro-notice", ".cat-note", ".pomo-chip", ".session-timer", ".break-picker"]) {
+      expect(block(selector), `${selector} uses the token`).toContain("font-family: var(--mm-font)");
+      expect(block(selector), `${selector} has left the retro face`).not.toContain("Courier");
     }
   });
 
   it("makes form controls inherit the font instead of the browser's", () => {
     // Buttons, selects and inputs take their font-family from the user-agent
-    // stylesheet, not from their container. The settings sidebar tabs are
-    // <button>s and rendered in the system font for exactly this reason, next
-    // to a panel that did not. One rule covers every control, present and
-    // future — the alternative is remembering `font-family: inherit` forever.
+    // stylesheet, not from their container. One rule covers every control.
     const controls = block("button,\ninput,\nselect,\ntextarea,\noptgroup");
     expect(controls).toContain("font-family: inherit");
   });
 
   it("gives the document itself a default face", () => {
-    // Without this, anything inheriting rather than declaring would land on
-    // the browser's default serif once controls started inheriting.
-    expect(block("html,\nbody")).toContain("font-family: var(--sk-font)");
+    expect(block("html,\nbody")).toContain("font-family: var(--mm-font)");
   });
 
   it("keeps the stacked mail cards matching the notice they belong to", () => {
     // .mail-card inherits .retro-notice's face; it must not set its own.
-    expect(block(".mail-card")).not.toContain("font-family: var(--sk-font)");
+    expect(block(".mail-card")).not.toContain("font-family");
+  });
+
+  it("has no label smaller than 10.5 px anywhere", () => {
+    // "No tiny unreadable labels": every literal font size in the stylesheets.
+    const sizes = [...allCss.matchAll(/font-size:\s*([\d.]+)px/g)].map((m) => Number(m[1]));
+    expect(sizes.length).toBeGreaterThan(20);
+    expect(Math.min(...sizes)).toBeGreaterThanOrEqual(10.5);
+  });
+
+  it("uses three weights, no more", () => {
+    // Single weights only: the @font-face "100 900" is the variable file's range.
+    const weights = new Set([...allCss.matchAll(/font-weight:\s*(\d{3});/g)].map((m) => m[1]));
+    expect([...weights].sort()).toEqual(["400", "500", "600"]);
   });
 });

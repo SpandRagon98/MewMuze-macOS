@@ -22,17 +22,17 @@ export interface SessionView {
   fraction: number;
   /** Break only: the countdown has reached / passed zero. */
   overrun: boolean;
-  /** Background colour for the timer chip. */
+  /** The session colour: the chip's dot and progress edge. */
   color: string;
-  /** White text on green/amber/red, or plain, matching `color`. */
+  /** Text colour to pair with `color` when it is used as a fill. */
   text: string;
 }
 
-/** Focus chip is a steady calm green. */
-export const FOCUS_GREEN = "#2e9e4f";
-const BREAK_START = [46, 158, 79] as const; // green  #2e9e4f
-const BREAK_MID = [212, 160, 23] as const; // deep amber #d4a017
-const BREAK_OVER = "#c0392b"; // red
+/** Focus is the design system's icy teal (--mm-accent-2). */
+export const FOCUS_COLOUR = "#5fd3e3";
+const BREAK_START = [76, 195, 138] as const; // success green #4cc38a
+const BREAK_MID = [230, 200, 92] as const; // amber-yellow #e6c85c - never orange
+const BREAK_OVER = "#ef5b64"; // danger red
 
 /** Options offered by the Break duration picker (minutes). */
 export const BREAK_MINUTES = [5, 10, 15, 20, 30] as const;
@@ -42,7 +42,7 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 /**
- * Break background: green at the start, ramping to deep amber as the break
+ * Break colour: green at the start, ramping to amber-yellow as the break
  * runs down, then a solid red once time is up. A single linear green→amber
  * interpolation across the whole break reads as "the clock is winding down"
  * without a jarring mid-point jump.
@@ -73,7 +73,7 @@ export function sessionView(session: Session, nowMs: number): SessionView {
       label: formatMMSS(elapsedS),
       fraction: 0,
       overrun: false,
-      color: FOCUS_GREEN,
+      color: FOCUS_COLOUR,
       text: "#ffffff",
     };
   }
@@ -107,7 +107,8 @@ export function startBreak(minutes: number, nowMs: number): Session {
  * scold someone for interacting with the cat itself. The dev binary name is
  * matched too, so `tauri dev` behaves like a release build.
  */
-const OWN_PROCESS = /^(mewmuze|pixel-cat-companion)(\.exe)?$/i;
+// Paper builds ship as MewMuzePaper.exe; it is still the cat's own window.
+const OWN_PROCESS = /^(mewmuze(paper)?|pixel-cat-companion)(\.exe)?$/i;
 
 export type FocusDrift =
   /** Nothing to react to: no foreground app, or it is MewMuze itself. */

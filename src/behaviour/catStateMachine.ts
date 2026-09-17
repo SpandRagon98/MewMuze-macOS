@@ -157,8 +157,15 @@ export class CatBrain {
       this.setBehaviour("chaseCursor", input);
     }
 
+    const idleS = input.userIdleS ?? (input.userIdle ? 999 : 0);
+    const drowsyAfter = input.drowsyAfterS ?? DROWSY_AFTER_S;
+    // Asleep while the user is still away: stay asleep. Re-deciding here picked
+    // another behaviour, the drowsy rule below sent it straight back to sleep,
+    // and the cat yawned itself awake again every six seconds.
+    const stayAsleep = this.behaviour === "sleep" && idleS >= drowsyAfter;
+
     // Periodic re-decision once the current behaviour has run its minimum.
-    if (this.decisionTimer >= DECISION_INTERVAL && this.age >= BEHAVIOUR_MIN[this.behaviour]) {
+    if (!stayAsleep && this.decisionTimer >= DECISION_INTERVAL && this.age >= BEHAVIOUR_MIN[this.behaviour]) {
       this.decisionTimer = 0;
       const wctx: WeightContext = {
         mood: state.mood,
@@ -178,8 +185,6 @@ export class CatBrain {
 
     // Left alone long enough: settle down and doze off. Checked before the
     // wake rule so a parked cursor can't hold the cat awake indefinitely.
-    const idleS = input.userIdleS ?? (input.userIdle ? 999 : 0);
-    const drowsyAfter = input.drowsyAfterS ?? DROWSY_AFTER_S;
     if (idleS >= drowsyAfter && this.behaviour !== "sleep" && !input.petting) {
       this.setBehaviour("sleep", input);
     }

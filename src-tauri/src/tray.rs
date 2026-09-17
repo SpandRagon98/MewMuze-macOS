@@ -123,7 +123,16 @@ pub fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .on_menu_event(|app, event| {
             let id = event.id.as_ref();
             match id {
-                "quit" => app.exit(0),
+                "quit" => {
+                    // The page saves anything still pending (Tasks) on this
+                    // event; the exit follows shortly whether or not it answers.
+                    let _ = app.emit("app-quitting", ());
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(700));
+                        app.exit(0);
+                    });
+                }
                 other => {
                     let _ = app.emit("tray-command", other.to_string());
                 }

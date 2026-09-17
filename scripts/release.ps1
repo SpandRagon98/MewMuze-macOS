@@ -1,7 +1,15 @@
 <#
   .SYNOPSIS
-    Cuts a full MewMuze desktop release: bumps the version, builds, signs,
-    generates the update manifest, and stages both repos.
+    Cuts a MewMuze PAPER release: bumps the version, builds, signs with
+    Paper's own key, generates Paper's update manifest, and stages both repos.
+
+    Paper is kept apart from MewMuze Pro at every step, so running this can
+    never offer Paper to Pro customers:
+      * its own signing key          .keys\updater.key (in THIS repo)
+      * its own GitHub release tag   paper-v<version>
+      * its own update feed          <website>\public\updates\paper\latest.json
+                                     = https://mewmuze.com/updates/paper/latest.json
+      * Pro's feed, downloads and checkout pages are never touched.
 
   .DESCRIPTION
     Commit your actual feature/fix changes first with a normal `git commit` -
@@ -105,7 +113,8 @@ function Publish-Installer($token, $version, $exePath, $notes) {
     "User-Agent"  = "mewmuze-release"
     Accept        = "application/vnd.github+json"
   }
-  $tag = "v$version"
+  # paper-v*, never v*: Pro's releases use the same version numbers.
+  $tag = "paper-v$version"
   $api = "https://api.github.com/repos/$GitHubRepo"
 
   # Reuse the release if a previous attempt already made it, so a retry is safe.
@@ -113,7 +122,7 @@ function Publish-Installer($token, $version, $exePath, $notes) {
   try {
     $release = Invoke-RestMethod -Uri "$api/releases/tags/$tag" -Headers $headers -TimeoutSec 60
   } catch {
-    $body = @{ tag_name = $tag; name = "MewMuze $version"; body = $notes } | ConvertTo-Json
+    $body = @{ tag_name = $tag; name = "MewMuze Paper $version"; body = $notes } | ConvertTo-Json
     try {
       $release = Invoke-RestMethod -Uri "$api/releases" -Method Post -Headers $headers -Body $body -ContentType "application/json" -TimeoutSec 60
     } catch {
@@ -152,7 +161,7 @@ if (-not (Test-Path (Join-Path $root ".keys\updater.key"))) {
 
 # ---- Pre-flight: both trees must be clean ----
 $dirty = git status --porcelain
-if ($dirty) { Fail "pixel-cat-companion has uncommitted changes - commit your actual fix/feature first:`n$dirty" }
+if ($dirty) { Fail "MewMuze Paper has uncommitted changes - commit your actual fix/feature first:`n$dirty" }
 Push-Location $WebsiteRepo
 $dirtyWeb = git status --porcelain
 Pop-Location
@@ -162,6 +171,11 @@ if ($dirtyWeb) { Fail "$WebsiteRepo has uncommitted changes - this script only t
 $confPath = Join-Path $root "src-tauri\tauri.conf.json"
 $conf = Get-Content $confPath -Raw | ConvertFrom-Json
 $oldVersion = $conf.version
+$product = $conf.productName
+if ($product -ne "MewMuze Paper") { Fail "This script releases MewMuze Paper only (productName is '$product')." }
+if ($conf.plugins.updater.endpoints -notcontains "https://mewmuze.com/updates/paper/latest.json") {
+  Fail "plugins.updater.endpoints must be https://mewmuze.com/updates/paper/latest.json - Paper must never read Pro's feed."
+}
 if (-not $Version) {
   $p = $oldVersion.Split('.')
   $p[2] = [string]([int]$p[2] + 1)
@@ -212,7 +226,7 @@ npm run app:build
 # Exit code is expected to be non-zero here: an unsigned build ends with
 # "no private key" by design (see docs/RELEASING.md). Check for the artifact
 # itself rather than trust the exit code.
-$exe = Join-Path $nsisDir "MewMuze_${Version}_x64-setup.exe"
+$exe = Join-Path $nsisDir "${product}_${Version}_x64-setup.exe"
 if (-not (Test-Path $exe)) { Fail "Build did not produce $exe - check the output above for a real failure." }
 Write-Host "Built $exe" -ForegroundColor Green
 
@@ -261,33 +275,19 @@ if ($manifest.platforms.'windows-x86_64'.url -ne $downloadUrl) {
   Fail "The manifest URL does not match the published asset."
 }
 
-# ---- Stage into the website repo ----
-Write-Host "`n== Copying into website repo ==" -ForegroundColor Cyan
-# The installer is no longer copied here at all - see Publish-Installer.
-Get-ChildItem (Join-Path $WebsiteRepo "public\downloads") -Filter "MewMuze_*_x64-setup.exe" -ErrorAction SilentlyContinue | Remove-Item -Force
-Copy-Item $manifestPath (Join-Path $WebsiteRepo "public\updates\latest.json") -Force
-
-$successPage = Join-Path $WebsiteRepo "app\checkout\success\page.tsx"
-$pageContent = Get-Content $successPage -Raw
-# One constant holds the download URL, so this is a single unambiguous rewrite.
-$pageContent = [regex]::Replace(
-  $pageContent,
-  'const DOWNLOAD_URL = "[^"]*";',
-  'const DOWNLOAD_URL = "' + $downloadUrl + '";')
-$pageContent = $pageContent -replace [regex]::Escape("Download MewMuze $oldVersion"), "Download MewMuze $Version"
-[System.IO.File]::WriteAllText($successPage, $pageContent)
-
-# Prove the rewrite landed. A success page still pointing at the previous
-# release is the worst silent outcome here: the deploy succeeds and every
-# buyer gets a download link to the wrong version.
-$check = Get-Content $successPage -Raw
-if ($check -notmatch [regex]::Escape("const DOWNLOAD_URL = `"$downloadUrl`";")) {
-  Fail "The success page's DOWNLOAD_URL was not rewritten to $downloadUrl."
-}
-if ($check -match [regex]::Escape("MewMuze_${oldVersion}_x64-setup.exe")) {
-  Fail "The success page still references the old installer MewMuze_${oldVersion}_x64-setup.exe."
-}
-Write-Host "Success page points at $Version" -ForegroundColor Green
+# ---- Stage into the website repo (Paper's own feed only) ----
+Write-Host "`n== Copying Paper's manifest into the website repo ==" -ForegroundColor Cyan
+$feedDir = Join-Path $WebsiteRepo "public\updates\paper"
+New-Item -ItemType Directory -Force -Path $feedDir | Out-Null
+Copy-Item $manifestPath (Join-Path $feedDir "latest.json") -Force
+# Pro's public\updates\latest.json, downloads and checkout page are deliberately untouched.
+$proFeed = Join-Path $WebsiteRepo "public\updates\latest.json"
+Push-Location $WebsiteRepo
+$touchedPro = git status --porcelain -- "public/updates/latest.json" "app/checkout"
+Pop-Location
+if ($touchedPro) { Fail "Pro's feed or checkout page changed during a Paper release - refusing to continue:`n$touchedPro" }
+Write-Host "Paper feed staged: public\updates\paper\latest.json" -ForegroundColor Green
+Write-Host "Point the website's Paper download button at: $downloadUrl" -ForegroundColor Yellow
 
 # ---- Website tests (unless -SkipTests) ----
 Push-Location $WebsiteRepo
@@ -301,11 +301,11 @@ if (-not $SkipTests) {
 
 # ---- Commit both repos ----
 git add -A
-git -c user.name="Spandan" -c user.email="rkenterpriseamazon08@gmail.com" commit -q -m "Ship MewMuze $Version`n`n$Notes"
+git -c user.name="Spandan" -c user.email="rkenterpriseamazon08@gmail.com" commit -q -m "Ship MewMuze Paper $Version`n`n$Notes"
 Pop-Location
 
 git add -A
-git -c user.name="Spandan" -c user.email="rkenterpriseamazon08@gmail.com" commit -q -m "Bump version to $Version`n`n$Notes"
+git -c user.name="Spandan" -c user.email="rkenterpriseamazon08@gmail.com" commit -q -m "Bump MewMuze Paper to $Version`n`n$Notes"
 Write-Host "`n== Committed locally in both repos ==" -ForegroundColor Green
 
 # ---- Push (only if -Push) ----
@@ -324,4 +324,4 @@ if ($Push) {
   Write-Host "  cd `"$WebsiteRepo`"; git push origin main"
 }
 
-Write-Host "`nMewMuze $Version is built, signed, and staged." -ForegroundColor Cyan
+Write-Host "`nMewMuze Paper $Version is built, signed, and staged." -ForegroundColor Cyan

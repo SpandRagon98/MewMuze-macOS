@@ -34,6 +34,11 @@ pub struct GmailMessage {
     pub subject: String,
     /// RFC822 Message-ID with the angle brackets stripped, empty when absent.
     pub message_id: String,
+    /// Still unread.
+    pub unread: bool,
+    /// Unread AND carrying Gmail's own "Important" marker - the strongest
+    /// signal the companion has that a message may need the user.
+    pub important: bool,
 }
 
 #[derive(Serialize, Default)]
@@ -45,6 +50,8 @@ pub struct GmailStatus {
     pub error: Option<String>,
     /// Number of unread (\Unseen) messages in the inbox.
     pub unseen: u32,
+    /// Unread messages Gmail marked Important.
+    pub important_unseen: u32,
     /// Highest UID present — the frontend compares this against the last value
     /// it saw to decide whether a *new* message has arrived.
     pub latest_uid: u32,
@@ -135,7 +142,11 @@ fn poll(email: &str, app_password: &str) -> Result<GmailStatus, String> {
 
     let result = (|| -> imap::error::Result<GmailStatus> {
         session.select("INBOX")?;
-        let unseen = session.search("UNSEEN")?.len() as u32;
+        let unseen_uids = session.uid_search("UNSEEN")?;
+        let unseen = unseen_uids.len() as u32;
+        // Gmail's own importance marker, via its IMAP search extension. Not a
+        // failure if the server does not support it - there is just no signal.
+        let important_uids = session.uid_search("UNSEEN X-GM-RAW \"is:important\"").unwrap_or_default();
         let mut all = session.uid_search("ALL")?.into_iter().collect::<Vec<u32>>();
         all.sort_unstable();
         let latest_uid = all.last().copied().unwrap_or(0);
@@ -143,6 +154,7 @@ fn poll(email: &str, app_password: &str) -> Result<GmailStatus, String> {
         let mut status = GmailStatus {
             ok: true,
             unseen,
+            important_unseen: important_uids.len() as u32,
             latest_uid,
             ..Default::default()
         };
@@ -160,13 +172,15 @@ fn poll(email: &str, app_password: &str) -> Result<GmailStatus, String> {
                     .from
                     .as_ref()
                     .and_then(|v| v.first())
-                    .map(|a| sender_label(a.name.as_deref(), a.mailbox.as_deref(), a.host.as_deref()))
+                    .map(|a| sender_label(a.name, a.mailbox, a.host))
                     .unwrap_or_default();
                 messages.push(GmailMessage {
                     uid,
                     from,
-                    subject: bytes_to_string(env.subject.as_deref()),
-                    message_id: strip_angle_brackets(&bytes_to_string(env.message_id.as_deref())),
+                    subject: bytes_to_string(env.subject),
+                    message_id: strip_angle_brackets(&bytes_to_string(env.message_id)),
+                    unread: unseen_uids.contains(&uid),
+                    important: important_uids.contains(&uid),
                 });
             }
             // The server may answer in any order; the frontend relies on UID

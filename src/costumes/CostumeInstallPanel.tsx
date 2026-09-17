@@ -7,6 +7,7 @@ import {
   pendingCostumeRequest,
   type PendingInstallRequest,
 } from "./costumeApi";
+import { Icon } from "../components/icons";
 
 function sizeLabel(bytes: number): string {
   if (!bytes) return "Package supplied after the mock checkout";
@@ -85,7 +86,7 @@ export function CostumeInstallPanel({
         {request.previewDataUrl ? (
           <img className="costume-confirm-preview" src={request.previewDataUrl} alt={`${request.costumeName} preview`} />
         ) : (
-          <div className="costume-confirm-preview placeholder" aria-label="Preview supplied with the signed package">✦</div>
+          <div className="costume-confirm-preview placeholder" aria-label="Preview supplied with the signed package"><Icon name="sparkle" size={36} /></div>
         )}
         <dl>
           <div><dt>Creator</dt><dd>{request.creator}</dd></div>

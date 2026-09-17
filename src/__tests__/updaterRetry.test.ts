@@ -32,6 +32,16 @@ describe("update retry", () => {
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
+  it("does not repeat a failure that can only fail again", async () => {
+    // A tampered download fails its signature check every time: retrying just
+    // downloads the same bad file twice more (seen in the real-app update test).
+    const fn = vi.fn(async () => {
+      throw new Error("signature verification failed");
+    });
+    await expect(withRetry(fn, 3, 0, (e) => !/signature/.test(String(e)))).rejects.toThrow("signature");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it("honours a single-attempt configuration", async () => {
     const fn = vi.fn(async () => {
       throw new Error("nope");

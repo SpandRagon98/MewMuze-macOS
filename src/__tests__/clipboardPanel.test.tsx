@@ -7,6 +7,7 @@ import {
   ClipboardBadge,
 } from "../clipboard-assistant/ClipboardBadge";
 import { CatContextMenu } from "../components/OverlayUI";
+import { openSubmenu } from "./menuHelpers";
 
 const session = {
   id: 1,
@@ -109,10 +110,17 @@ describe("ClipboardPanel actions", () => {
 
   it("requires confirmation before clearing", async () => {
     const { onClear } = render();
-    vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    // The in-app confirmation: Cancel keeps the clipboard, Clear clears it.
+    const answer = async (label: string) => {
+      const b = [...document.body.querySelectorAll<HTMLButtonElement>(".mm-confirm button")].find((x) => x.textContent === label);
+      if (!b) throw new Error(`no confirmation button "${label}"`);
+      await act(async () => b.click());
+    };
     await act(async () => button("Clear").click());
+    await answer("Cancel");
     expect(onClear).not.toHaveBeenCalled();
     await act(async () => button("Clear").click());
+    await answer("Clear");
     expect(onClear).toHaveBeenCalledOnce();
   });
 
@@ -186,7 +194,9 @@ describe("ClipboardPanel actions", () => {
           />,
         );
       });
+    // It lives in the Quick Tools submenu.
     renderMenu(false);
+    openSubmenu(host, "Quick Tools");
     expect(host.textContent).not.toContain("Clipboard Assistant");
     renderMenu(true);
     expect(host.textContent).toContain("Clipboard Assistant");

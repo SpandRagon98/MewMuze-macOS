@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState, type ComponentType } from "react";
 import { Overlay } from "./components/Overlay";
 import type { CatRendererHandle } from "./components/CatRenderer";
 import {
@@ -14,8 +14,7 @@ import {
   type MenuState,
   type MenuCommand,
 } from "./components/OverlayUI";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { LicenseGate } from "./components/LicenseGate";
+import type { SettingsPageId } from "./components/SettingsPanel";
 import { ReminderPanel, NotePanel } from "./components/ReminderPanel";
 import { focusDrift, startFocus, startBreak, type Session } from "./productivity/session";
 import { pollGmail, newMessages, mailLine, gmailMessageUrl, GMAIL_POLL_MS } from "./integrations/gmail";
@@ -38,9 +37,7 @@ import {
   isWithdrawn,
   INITIAL_FULLSCREEN_STATE,
 } from "./behaviour/fullscreenRetreat";
-import { QuickToolsPanel, ThunderStrike } from "./components/QuickToolsPanel";
-import { CalcTimePanel } from "./components/CalcTimePanel";
-import { PhotoModePanel, type PhotoSelection } from "./photo/PhotoModePanel";
+import type { PhotoSelection } from "./photo/PhotoModePanel";
 import { findExpression, findPose } from "./photo/photoMode";
 import type { Area, Box } from "./quicktools/panelPlacement";
 import { CatEngine } from "./engine/catEngine";
@@ -69,15 +66,22 @@ import { buildPlatforms, monitorAt } from "./physics/platformResolver";
 import { loadSettings, saveSettings, sanitizeSettings, type Settings } from "./settings/settingsStore";
 import { ACTIVITY_PROFILES, DEFAULT_SETTINGS, SIZE_TO_LOGICAL_PX } from "./settings/defaultSettings";
 import { clearSpriteCache, configureAppearance, setSpriteCacheLimit } from "./animation/spriteLoader";
-import { activateCostumeOverlay, setCostumeTint } from "./costumes/costumeOverlay";
+import { activateCostumeOverlay, activeCostumeTraits, costumeOverlayEpoch, setCostumeTint } from "./costumes/costumeOverlay";
 import { CostumeInstallPanel } from "./costumes/CostumeInstallPanel";
 import { resolveLicenseState, type LicenseState } from "./licensing/license";
 import { FrameBudget, setQualityLevel, CACHE_LIMIT as QUALITY_CACHE_LIMIT, type QualityLevel } from "./perf/quality";
-import { checkForUpdate, installUpdate } from "./licensing/updater";
+import {
+  checkForUpdate,
+  friendlyUpdateError,
+  installUpdate,
+  loadDismissed,
+  saveDismissed,
+  shouldNotify,
+  UPDATE_CHECK_EVERY_MS,
+} from "./licensing/updater";
 import { SoundManager } from "./audio/soundManager";
 import type { AnimationName } from "./types/cat";
 import { ClipboardBadge } from "./clipboard-assistant/ClipboardBadge";
-import { ClipboardPanel } from "./clipboard-assistant/ClipboardPanel";
 import { ClipboardController } from "./clipboard-assistant/ClipboardController";
 import {
   clearClipboard,
@@ -94,8 +98,76 @@ import type {
 } from "./clipboard-assistant/clipboardTypes";
 import { scheduleClipboardBadgeDismiss } from "./clipboard-assistant/ClipboardNotice";
 import { canPlayClipboardReaction } from "./clipboard-assistant/ClipboardPriority";
+import { CompanionEngine, fetchMetWeather } from "./companion/engine";
+import { CompanionScheduler, defaultEnv } from "./companion/scheduler";
+import { loadState as loadCompanionState, saveState as saveCompanionState } from "./companion/store";
+import { dayKey, systemTimeZone } from "./companion/clock";
+import { effectiveMode, readPowerStatus, UNKNOWN_POWER, type PowerStatus } from "./companion/power";
+import { netStats, setNetPaused } from "./companion/net";
+import { typicalFinish, typicalStart } from "./companion/routine";
+import { adaptActivity, clearHabits, emptyHabits, loadHabits, observe as observeHabit, rhythmNote, saveHabits } from "./companion/habits";
+import type { NoteAction, NoteKind } from "./companion/notify";
+import type { CompanionPanelApi } from "./components/CompanionSettings";
+import type { GmailStatus } from "./integrations/gmail";
+import { LocalAIManager, tauriBridge } from "./companion/localAI";
+import { AIUsageMonitor, GUARD_ACTIONS, GUARD_LINES } from "./companion/aiUsage";
+import { VoiceController, tauriVoiceBridge, IDLE as VOICE_IDLE, type VoiceState } from "./companion/voiceController";
+import { ChatController, INITIAL_CHAT, type ChatState } from "./companion/chatController";
+import { Diary, makeSummarizer, tauriDiary } from "./companion/diary";
+import { DEFAULT_MODEL, externalAI, type ExternalId } from "./companion/providers";
+import { describeItem, forgetItem, loadFollowUps, loadMemory, loadStyle, saveFollowUps, saveMemory, saveStyle } from "./companion/memory";
+import { currentInfo } from "./companion/persona/currentInfo";
+import { describeFollowUp } from "./companion/persona/followUps";
+import { persona } from "./companion/persona/personas";
+import type { PersonaSnapshot } from "./companion/persona/router";
+import { describeTraits, traits } from "./companion/persona/style";
+import { fetchHeadlines } from "./companion/news";
+import { fetchRate } from "./companion/watchlists";
+import { MoodInfluence, catReaction, type Mood } from "./companion/mood";
+import { chatResponse, edgyInvite, isSerious, personaGesture } from "./emotion/responses";
+import type { EmotionId } from "./emotion/emotions";
+import type { GestureId } from "./emotion/gestures";
+import { ButterflyVisit, nextVisitMs, pickPath, type ButterflyPath } from "./emotion/butterfly";
+import { taskStore } from "./tasks/tauriTasks";
+import {
+  STATE_LABEL,
+  moduleCancel,
+  moduleDownload,
+  modulePause,
+  moduleRemove,
+  moduleStatus,
+  onModuleEvents,
+  onModuleStatus,
+  usable,
+} from "./companion/modules";
+import { DictationChip, VoicePanel } from "./components/VoicePanel";
 import "./components/ui.css";
 import "./clipboard-assistant/clipboard.css";
+
+/**
+ * A panel whose code loads the first time it opens. The desktop cat starts
+ * without Settings, the tools and their helpers (most of the bundle), and a
+ * session that never opens one never parses it. Each gets its own Suspense,
+ * so loading one never blanks the cat or a notice beside it.
+ */
+function lazyPanel<P extends object>(load: () => Promise<ComponentType<P>>): ComponentType<P> {
+  // The cast only narrows lazy()'s ref-aware props back to the panel's own.
+  const Panel = lazy(() => load().then((c) => ({ default: c }))) as unknown as ComponentType<P>;
+  return (props: P) => (
+    <Suspense fallback={null}>
+      <Panel {...props} />
+    </Suspense>
+  );
+}
+const SettingsPanel = lazyPanel(() => import("./components/SettingsPanel").then((m) => m.SettingsPanel));
+const LicenseGate = lazyPanel(() => import("./components/LicenseGate").then((m) => m.LicenseGate));
+const QuickToolsPanel = lazyPanel(() => import("./components/QuickToolsPanel").then((m) => m.QuickToolsPanel));
+const ThunderStrike = lazyPanel(() => import("./components/QuickToolsPanel").then((m) => m.ThunderStrike));
+const CalcTimePanel = lazyPanel(() => import("./components/CalcTimePanel").then((m) => m.CalcTimePanel));
+const PhotoModePanel = lazyPanel(() => import("./photo/PhotoModePanel").then((m) => m.PhotoModePanel));
+const ClipboardPanel = lazyPanel(() => import("./clipboard-assistant/ClipboardPanel").then((m) => m.ClipboardPanel));
+const TasksPanel = lazyPanel(() => import("./tasks/TasksPanel").then((m) => m.TasksPanel));
+const ChatPanel = lazyPanel(() => import("./components/ChatPanel").then((m) => m.ChatPanel));
 
 const WORLD_REFRESH_MS = 1000;
 const PERSIST_MS = 5000;
@@ -245,10 +317,37 @@ interface Bridge {
   copyClipboard: (text: string) => Promise<void>;
   clearClipboard: () => Promise<void>;
   closeClipboard: () => void;
+  /** Close Tasks (saves anything pending first). */
+  closeTasks: () => void;
   openClipboardLink: (url: string) => Promise<void>;
   reactClipboard: (reaction: ClipboardReaction) => void;
   /** Park the real cat in the pose Photo Mode is previewing. */
   holdPhotoPose: (selection: PhotoSelection) => void;
+  /** Paper: a button on a companion card (Open Meeting, Open Calendar...). */
+  companionAction: (action: NoteAction) => void;
+  /** Paper: what Settings → Companion reads and does. */
+  companionApi: CompanionPanelApi;
+  /** Paper Phase 2: the chat and recorder panels. */
+  aiUI: {
+    chatSend: (text: string) => void;
+    chatCancel: () => void;
+    chatForget: () => void;
+    chatRetry: () => void;
+    chatClose: () => void;
+    chatNew: () => void;
+    /** An external provider failed: switch the setting to Local (the user's click) and resend. */
+    chatUseLocal: () => void;
+    diary: Diary;
+    micStart: () => void;
+    micStop: () => void;
+    voiceStart: () => void;
+    voiceStop: () => void;
+    voiceCancel: () => void;
+    voiceCopy: (text: string) => void;
+    voiceSave: () => void;
+    voiceNew: () => void;
+    voiceClose: () => void;
+  };
 }
 
 interface NativeLicenseStatus {
@@ -269,8 +368,16 @@ export default function App() {
 
   // UI state (React); the engine itself stays imperative inside the effect.
   const [settingsUI, setSettingsUI] = useState<Settings>(DEFAULT_SETTINGS);
+  // Light or dark: every surface reads its colours from tokens keyed on this.
+  useEffect(() => {
+    document.documentElement.dataset.theme = settingsUI.theme;
+  }, [settingsUI.theme]);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<SettingsPageId>("home");
+  // The render loop is a closure and cannot read state, so it reads this.
+  const panelOpenRef = useRef(false);
+  panelOpenRef.current = panelOpen;
   const [settingsForeground, setSettingsForeground] = useState(false);
   const [costumeInstallOpen, setCostumeInstallOpen] = useState(false);
   const [reminderPanelOpen, setReminderPanelOpen] = useState(false);
@@ -310,8 +417,18 @@ export default function App() {
   const [clipboardPanel, setClipboardPanel] = useState<{ cat: Box; area: Area } | null>(null);
   /** Calc & Time panel: same open-beside-the-cat contract as Quick Tools. */
   const [calcTime, setCalcTime] = useState<{ cat: Box; area: Area } | null>(null);
+  // Paper Phase 2: local AI panels and their live state.
+  const [chatUI, setChatUI] = useState<{ cat: Box; area: Area } | null>(null);
+  const [voiceUI, setVoiceUI] = useState<{ cat: Box; area: Area } | null>(null);
+  const [chatState, setChatState] = useState<ChatState>(INITIAL_CHAT);
+  /** Bumped whenever the Diary changes, so an open Diary list reloads. */
+  const [diaryRev, setDiaryRev] = useState(0);
+  const [voiceState, setVoiceState] = useState<VoiceState>(VOICE_IDLE);
+  const [aiAvailUI, setAiAvailUI] = useState({ voice: false, chat: false });
   /** Photo Mode panel: same open-beside-the-cat contract as Quick Tools. */
   const [photoMode, setPhotoMode] = useState<{ cat: Box; area: Area } | null>(null);
+  /** Tasks panel: the same contract again. */
+  const [tasksUI, setTasksUI] = useState<{ cat: Box; area: Area } | null>(null);
 
   // Neither bought nor in trial: the cat is withheld until a key or a trial
   // unlocks it. Offline grace keeps an already-activated customer out of here.
@@ -347,6 +464,14 @@ export default function App() {
   calcTimeRef.current = calcTime;
   const photoModeRef = useRef(photoMode);
   photoModeRef.current = photoMode;
+  const chatUIRef = useRef(chatUI);
+  chatUIRef.current = chatUI;
+  const voiceUIRef = useRef(voiceUI);
+  voiceUIRef.current = voiceUI;
+  const tasksUIRef = useRef(tasksUI);
+  tasksUIRef.current = tasksUI;
+  /** The dictation chip is showing (it rides above the cat like a notice). */
+  const dictationRef = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -539,9 +664,6 @@ export default function App() {
         );
       };
       // Panel/menu theme: a single class on the root re-skins every sk surface.
-      const applyTheme = (t: Settings["uiTheme"]) =>
-        document.documentElement.classList.toggle("sk-light", t === "light");
-      applyTheme(current.uiTheme);
       setSettingsUI(current);
 
       // ---- native world bootstrap ----
@@ -580,10 +702,34 @@ export default function App() {
         start: current.lastPosition ?? undefined,
       });
       engine.setWorld({ platforms: [], bounds, monitors, origin, scale });
+
+      // ---- learned daily rhythm (companion/habits.ts) ----
+      // Plain arithmetic on this machine: which hours you are usually busy in,
+      // and whether you play with the cat. Local Chat installed and picked is
+      // what unlocks ACTING on it; the numbers themselves are just numbers.
+      let habits = loadHabits();
+      let playedSinceTick = false;
+      let aiChatReady = false;
+      let appliedActivity = "";
+      const adaptiveCat = () =>
+        aiChatReady &&
+        current.companion.enabled &&
+        current.companion.chat.provider === "local" &&
+        current.companion.features.routineLearning;
+      /** The cat's liveliness: the Activity setting, leaned by the learned hour. */
+      const applyActivity = () => {
+        const base = ACTIVITY_PROFILES[current.activityLevel];
+        const next = adaptiveCat() ? adaptActivity(base, habits, new Date().getHours()) : base;
+        const key = `${next.playfulness}/${next.chaseEagerness}/${next.restfulness}`;
+        if (key === appliedActivity) return;
+        appliedActivity = key;
+        engine.setActivity(next);
+      };
       engine.setPaused(current.paused);
       engine.setEyeTracking(current.eyeTracking);
       engine.setDragStretch(current.dragStretch);
       engine.setDrowsyAfterS(current.drowsyAfterSec);
+      engine.setExpressionSettings({ level: current.expressionIntensity, edgy: current.edgyGestures });
 
       await syncAutostart(current.startWithWindows);
       await updateTray(current);
@@ -643,6 +789,21 @@ export default function App() {
       let typingStreakS = 0;
       let sinceLastPetS = 0;
       let placardUntil = 0;
+      /** Something happened on the desktop: a feeling (and maybe a paw gesture) on top of the existing reaction. */
+      const react = (emotion: EmotionId, intensity: number, gesture?: GestureId, source: "event" | "ambient" = "event") => {
+        if (current.catOff || fullscreenActive) return;
+        if (engine.feel({ emotion, intensity, source }) && gesture) engine.gesture(gesture);
+      };
+      /** Morning, day or evening: a soft ambient mood when the part of the day changes. */
+      let partOfDay = "";
+      let wasDancing = false;
+      /** A butterfly visit in progress, and when the next one may come (Settings → Butterfly visits). */
+      let butterfly: ButterflyVisit | null = null;
+      let nextButterflyAt = nextVisitMs(performance.now());
+      /** Play → Send a butterfly: starts on the next frame, on this path. */
+      let butterflyRequested: ButterflyPath | null = null;
+      /** The costume the emotion system last heard about (its traits change what the face can show). */
+      let traitsEpoch = -1;
       /** id+phase of the scheduled reminder currently surfaced (anim edge detect). */
       let lastSchedKey = "";
       /** Next moment (perf ms) the focused cat allows itself a little cheer. */
@@ -660,10 +821,10 @@ export default function App() {
       let lastGmailUid = 0; // highest UID surfaced so far (0 = no baseline yet)
       let gmailPolling = false;
       let calEvents: CalEventRaw[] = [];
-      let calPolling = false;
-      let nextCalAt = 0;
       let lastCalAlertKey = "";
       let dismissedCalKey = "";
+      /** Paper: set once the companion exists; applySettings may run before that. */
+      let onCompanionSettings: ((next: Settings, prev: Settings) => void) | null = null;
       // Scales animation detail to what this machine can actually sustain.
       const budget = new FrameBudget();
       let appliedQuality: QualityLevel = "high";
@@ -740,6 +901,25 @@ export default function App() {
       }, INPUT_POLL_MS);
       cleanup.push(() => clearInterval(inputTimer));
 
+      // ---- one observation a minute: "are they working, did they play?" ----
+      // No polling of its own - it reads values the loop already has - and it
+      // only writes to disk when an hour closes, so an idle day costs 24 writes.
+      const habitTimer = setInterval(() => {
+        // "Learn my routine" off means exactly that: nothing is observed, not
+        // even in memory. What was already learned stays until it is reset.
+        if (current.catOff || !current.companion.features.routineLearning) return;
+        const busy =
+          typingLevel !== "none" ||
+          pomodoro.currentPhase === "focus" ||
+          sessionRef.current?.kind === "focus";
+        const before = habits.hour;
+        habits = observeHabit(habits, { hour: new Date().getHours(), busy, played: playedSinceTick });
+        playedSinceTick = false;
+        if (habits.hour !== before) saveHabits(habits);
+        applyActivity();
+      }, 60_000);
+      cleanup.push(() => clearInterval(habitTimer));
+
       const fsTimer = setInterval(async () => {
         const fs = await invokeSafe<boolean>("is_fullscreen_active");
         fullscreenActive = fs === true;
@@ -767,13 +947,16 @@ export default function App() {
         if (state !== lastAgentState) {
           if (state === "success") {
             engine.playOneShot("celebrate");
+            react("victory", 0.8, "victory");
             sound.play("meow");
             showInfoBubble(`${current.userName ? current.userName + ", " : ""}the agent finished! ✅`);
           } else if (state === "failed") {
             engine.playOneShot("confused");
+            react("confused", 0.65, "shrug");
             showInfoBubble("The agent hit an error 🐾");
           } else if (state === "attention") {
             engine.playOneShot("startled");
+            react("surprised", 0.7);
           }
           lastAgentState = state;
         }
@@ -803,6 +986,7 @@ export default function App() {
               setSession(null);
               focusApp = null;
               engine.playOneShot("angry");
+              react("annoyed", 0.75, "point");
               showInfoBubble("You said you would focus! But you are not focusing… 😾");
             }
           }
@@ -844,6 +1028,20 @@ export default function App() {
         } else {
           engine.grabEnd(res.releaseVelocity);
         }
+      };
+      // bench/uiFps.mjs measures the menu's animation. The menu opens only from
+      // the real cursor over the cat, which a script cannot produce, so this
+      // opens it beside the cat instead. Harmless: it is the same menu.
+      (window as unknown as { __mewmuzeOpenMenu?: () => void }).__mewmuzeOpenMenu = () => {
+        const b = catCssBox();
+        if (!current.catOff) setMenu({ x: b.x + b.width * 0.6, y: b.y + b.height * 0.3 });
+      };
+      // bench/emotion-live.mjs photographs every feeling on the real desktop cat.
+      // Same engine call the chat and events make; nothing is stored.
+      (window as unknown as { __mewmuzeFeel?: (emotion: EmotionId, intensity: number) => boolean }).__mewmuzeFeel = (emotion, intensity) =>
+        engine.feel({ emotion, intensity, source: "interaction", duration: 6 });
+      (window as unknown as { __mewmuzeButterfly?: (path: ButterflyPath) => void }).__mewmuzeButterfly = (path) => {
+        butterflyRequested = path;
       };
       const onContext = (e: MouseEvent) => {
         e.preventDefault();
@@ -897,13 +1095,13 @@ export default function App() {
           setCostumeTint(eff.costumeTint);
           void activateCostumeOverlay(eff.selectedCostumeId).catch(() => activateCostumeOverlay(""));
         }
-        if (next.uiTheme !== prev.uiTheme) applyTheme(next.uiTheme);
-        engine.setActivity(ACTIVITY_PROFILES[next.activityLevel]);
+        applyActivity();
         engine.setSize(SIZE_TO_LOGICAL_PX[next.catSize] * scale);
         engine.setPaused(next.paused);
         engine.setEyeTracking(next.eyeTracking);
         engine.setDragStretch(next.dragStretch);
         engine.setDrowsyAfterS(next.drowsyAfterSec);
+        engine.setExpressionSettings({ level: next.expressionIntensity, edgy: next.edgyGestures });
         sound.setEnabled(next.soundEnabled && !next.masterMuted);
         pomodoro.setConfig(eff.pomodoro);
         reminders.configure(eff.stretchReminder, eff.waterReminder, eff.customReminders, next.userName, performance.now() / 1000);
@@ -915,6 +1113,7 @@ export default function App() {
           setClipboardPanel(null);
         }
         if (next.startWithWindows !== prev.startWithWindows) void syncAutostart(next.startWithWindows);
+        onCompanionSettings?.(next, prev);
         void saveSettings(next);
         void updateTray(next);
       };
@@ -1038,7 +1237,10 @@ export default function App() {
         if (off === current.catOff) return;
         // A hidden cat cannot be photographed, and leaving the pose hold set
         // would freeze it on the way back in.
-        if (off) closePhotoMode();
+        if (off) {
+          closePhotoMode();
+          closeTasksPanel();
+        }
         const prev = current;
         if (off) {
           // Exit: wave goodbye, then fade+shrink, then hide the window.
@@ -1229,12 +1431,19 @@ export default function App() {
       // Declared above enterCalcMode/enterWorkMode, which close it when they
       // take over; a const referenced before its initialiser throws a TDZ error
       // that silently kills the whole bootstrap.
+      /** Close Tasks, writing any edit still waiting on its debounce. */
+      const closeTasksPanel = () => {
+        void taskStore.flush();
+        setTasksUI(null);
+      };
+
       const closePhotoMode = () => {
         // Order matters only in that both must happen: the pose hold and the
         // expression override are the ONLY engine state Photo Mode touches, so
         // clearing them hands the cat back exactly as it was found.
         engine.setPhotoPose(null);
         engine.setPhotoExpression(null);
+        engine.setPhotoEmotion(null);
         setPhotoMode(null);
       };
 
@@ -1258,6 +1467,7 @@ export default function App() {
             ? { eyes: expression.eyes, mouth: expression.mouth }
             : null,
         );
+        engine.setPhotoEmotion(expression.emotion ?? null);
       };
 
       const enterCalcMode = () => {
@@ -1290,6 +1500,529 @@ export default function App() {
       };
 
 
+      // ---- Paper: Personal Companion ------------------------------------------
+      // ONE scheduler owns every periodic check the companion needs - and now
+      // Gmail and Calendar polling too, which used to run on their own timer
+      // and inside the render loop. It keeps a single timer armed for the
+      // earliest due job, stretches intervals on battery / Battery Saver, backs
+      // off on failure, waits out offline spells and defers network work while
+      // a full-screen app is in front.
+      const scheduler = new CompanionScheduler({ ...defaultEnv(), fullscreen: () => fullscreenActive });
+      let power: PowerStatus = UNKNOWN_POWER;
+      let online = typeof navigator === "undefined" || navigator.onLine !== false;
+      let lastMail: GmailStatus | null = null;
+      let lastFocus: Session | null = null;
+      let companionShownAt = 0;
+      let companionShownKind: NoteKind = "system";
+      const dayCounts = { day: "", focusSessions: 0, remindersDone: 0 };
+      const rollCounts = () => {
+        const d = dayKey(Date.now(), systemTimeZone());
+        if (dayCounts.day !== d) Object.assign(dayCounts, { day: d, focusSessions: 0, remindersDone: 0 });
+      };
+      const countToday = (k: "focusSessions" | "remindersDone") => {
+        rollCounts();
+        dayCounts[k]++;
+      };
+      let savedCompanion = "";
+      const companion = new CompanionEngine(
+        {
+          now: () => Date.now(),
+          tz: systemTimeZone,
+          osLanguage: () => (typeof navigator !== "undefined" && navigator.language) || "en",
+          // The companion's name falls back to the one set in Productivity.
+          settings: () => ({ ...current.companion, preferredName: current.companion.preferredName.trim() || current.userName.trim() }),
+          context: () => ({
+            focus: sessionRef.current?.kind === "focus" || pomodoro.currentPhase === "focus",
+            fullscreen: fullscreenActive,
+            slotBusy: Boolean(bubbleRef.current),
+            idleSeconds: nativeIdleMs !== null ? nativeIdleMs / 1000 : tracker.idleSeconds(performance.now()),
+            catVisible: !current.catOff && !fullscreenActive && !isWithdrawn(fsState),
+            online,
+          }),
+          show: (note) => {
+            companionShownAt = Date.now();
+            companionShownKind = note.kind;
+            setBubble({
+              id: `cmp:${note.id}`,
+              message: note.lines[0],
+              lines: note.lines.length > 1 ? note.lines.slice(1) : undefined,
+              actions: note.actions,
+              snoozable: false,
+              variant: note.priority === "urgent" ? "due" : undefined,
+            });
+            if (note.priority !== "low") sound.play("meow");
+          },
+          play: (anim) => engine.playOneShot(anim),
+          dayCounts: () => {
+            rollCounts();
+            return { focusSessions: dayCounts.focusSessions, remindersDone: dayCounts.remindersDone };
+          },
+          remindersToday: () => {
+            const tz = systemTimeZone();
+            const today = dayKey(Date.now(), tz);
+            return current.scheduledReminders.filter((r) => !r.done && dayKey(r.dueUnix * 1000, tz) === today).length;
+          },
+          mailCounts: () =>
+            current.gmail.connected && lastMail?.ok
+              ? { unread: lastMail.unseen, important: lastMail.importantUnseen ?? null }
+              : { unread: null, important: null },
+          save: (state) => {
+            // Only when something actually changed: most ticks change nothing.
+            const json = JSON.stringify(state);
+            if (json === savedCompanion) return;
+            savedCompanion = json;
+            saveCompanionState(state);
+          },
+        },
+        loadCompanionState(),
+      );
+      const showCompanionCard = (lines: string[], id: string) => {
+        if (lines.length === 0) return;
+        companionShownAt = Date.now();
+        companionShownKind = "system";
+        setBubble({ id: `cmp:${id}:${Date.now()}`, message: lines[0], lines: lines.length > 1 ? lines.slice(1) : undefined, snoozable: false });
+      };
+      void setNetPaused(current.companion.internetPaused);
+
+      // ---- Paper Phase 2: optional local AI ----------------------------------
+      // Nothing here loads a model or opens the microphone. The chat model
+      // loads when a chat opens; Whisper runs once per transcription; the mic
+      // is open only between an explicit Start and Stop.
+      const ai = new LocalAIManager(tauriBridge, {
+        setTimer: (fn, ms) => setTimeout(fn, ms),
+        clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+        cpuThreads: (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 8,
+      });
+      ai.setMode(effectiveMode(current.companion.powerMode, power));
+      ai.setChatModel(() => current.companion.chat.model);
+      const usageMonitor = new AIUsageMonitor();
+      const moodInfluence = new MoodInfluence();
+      let aiAvail = { voice: false, chat: false };
+      /** Who is answering, for the calm pose held while the conversation lasts. */
+      let personaHold: { anim: AnimationName; until: number } | null = null;
+      const applyMood = (m: Mood, p?: PersonaSnapshot) => {
+        moodInfluence.set(m, Date.now());
+        // The persona shapes the physical cat (Health Guide's notebook, Savage
+        // Bestie's side-eye); the mood fills in when the persona has no move.
+        // The face and paws come from the emotion engine: a RESPONSE to the
+        // user's mood (sad → comforting), leaned by the persona.
+        const userMood = m.intensity >= 0.15 ? m.mood : null;
+        chatSerious = isSerious(p?.primary, userMood);
+        engine.setEmotionContext({ serious: chatSerious, edgyInvited: !chatSerious && edgyInvite(p?.primary, userMood) });
+        const felt = chatResponse(m.mood, m.intensity, p?.primary);
+        const accepted = !!felt && !current.catOff && engine.feel({ ...felt, source: "chat", duration: 12 });
+        // A new persona says hello with its paw (Hype Cat claps, Fitness Coach thumbs up) - once.
+        const who = p?.primary ?? null;
+        const hello = who !== lastPersona && !chatSerious ? personaGesture(who) : null;
+        lastPersona = who;
+        if (hello && !current.catOff && !fullscreenActive) engine.gesture(hello);
+        const r = catReaction(m);
+        const cat = p ? persona(p.primary).cat : {};
+        const once = cat.once ?? (accepted ? undefined : r.once);
+        if (once && !current.catOff && !fullscreenActive) engine.playOneShot(once);
+        personaHold = cat.hold ? { anim: cat.hold, until: Date.now() + 4 * 60_000 } : null;
+      };
+      /** Is the conversation somewhere nothing flippant belongs (health, grief, a listening persona)? */
+      let chatSerious = false;
+      let lastPersona: string | null = null;
+      let chatStatus: ChatState["status"] = "closed";
+      /** The chat's state, and the cat thinks while a reply is being written. */
+      const onChatState = (st: ChatState) => {
+        setChatState(st);
+        if (st.status === chatStatus) return;
+        const was = chatStatus;
+        chatStatus = st.status;
+        if (st.status === "thinking" && !current.catOff) {
+          // Not over a comforting face: in a heavy conversation the cat stays soft.
+          if (!chatSerious) engine.feel({ emotion: "thinking", intensity: 0.55, source: "chat", duration: 40 });
+        } else if (was === "thinking" && engine.feeling().emotion === "thinking") {
+          engine.releaseFeeling("chat");
+        }
+        if (st.status === "closed") {
+          chatSerious = false;
+          lastPersona = null;
+          engine.setEmotionContext({ serious: false, edgyInvited: false });
+          engine.releaseFeeling("chat");
+        }
+      };
+      /** A calm pose held while a strong feeling fades, or while a listening persona is active. */
+      const moodHoldAnim = (): AnimationName | null =>
+        catReaction(moodInfluence.get(Date.now())).hold ?? (personaHold && personaHold.until > Date.now() ? personaHold.anim : null);
+
+      /** The last dictation's full text, for the notice's Copy all. */
+      let lastDictation = "";
+      const voice = new VoiceController(
+        tauriVoiceBridge,
+        ai,
+        {
+          language: () => current.companion.voice.language,
+          spokenPunctuation: () => current.companion.voice.spokenPunctuation,
+          insertMode: () => current.companion.voice.insertMode,
+          onChatText: (text) => void chat.send(text),
+        },
+        (st) => {
+          setVoiceState(st);
+          dictationRef.current = st.mode === "dictation" && (st.phase === "starting" || st.phase === "recording" || st.phase === "transcribing");
+          if (st.mode !== "dictation") return;
+          if (st.phase === "done" && st.clean) {
+            const said = st.clean.length > 60 ? `${st.clean.slice(0, 59)}…` : st.clean;
+            // The notice shows a preview; Copy all puts the whole transcript on the clipboard.
+            lastDictation = st.clean;
+            setBubble({
+              id: `info-${Date.now()}`,
+              message: `✍ ${current.companion.voice.insertMode === "paste" ? "Inserted" : "Copied"}: ${said}`,
+              snoozable: false,
+              actions: [{ id: "copy-dictation", label: "Copy all" }],
+            });
+          } else if (st.phase === "error" && st.error) {
+            showInfoBubble(`🎙 ${st.error}`);
+          }
+        },
+      );
+      // The brains besides Local: the user's own keys, used only when chosen.
+      const externals: Record<ExternalId, ReturnType<typeof externalAI>> = {
+        openai: externalAI("openai", () => current.companion.chat.openaiModel || DEFAULT_MODEL.openai),
+        anthropic: externalAI("anthropic", () => current.companion.chat.anthropicModel || DEFAULT_MODEL.anthropic),
+      };
+      const chosenExternal = (): { id: ExternalId; ai: ReturnType<typeof externalAI> } | null => {
+        const p = current.companion.chat.provider;
+        return p === "local" ? null : { id: p, ai: externals[p] };
+      };
+      // The Diary: summarised by the local model whenever it is installed.
+      const diary = new Diary(
+        tauriDiary,
+        makeSummarizer({
+          localInstalled: () => aiAvail.chat,
+          local: ai,
+          external: () => (current.companion.chat.diaryExternal ? chosenExternal() : null),
+        }),
+        {
+          name: () => current.companion.preferredName.trim() || current.userName.trim(),
+          enabled: () => current.companion.chat.diary,
+          onChange: () => setDiaryRev((n) => n + 1),
+        },
+      );
+      /** The last conversation handed to the Diary, so a quiet chat is not re-summarised every tick. */
+      let diaryHeld = "";
+      const keepDiary = (s: ReturnType<ChatController["diarySession"]>) => {
+        const key = s ? `${s.id}:${s.lines.length}` : "";
+        if (!s || key === diaryHeld) return;
+        diaryHeld = key;
+        void diary.remember(s);
+      };
+      const chat = new ChatController(
+        ai,
+        {
+          settings: () => current.companion,
+          userName: () => current.companion.preferredName.trim() || current.userName.trim(),
+          osLanguage: () => (typeof navigator !== "undefined" && navigator.language) || "en",
+          loadMemory,
+          saveMemory,
+          loadStyle,
+          saveStyle,
+          loadFollowUps,
+          saveFollowUps,
+          onMood: applyMood,
+          rhythm: () => (adaptiveCat() ? rhythmNote(habits, new Date().getHours()) : null),
+          // Live facts from the companion's own sources, behind its own switches.
+          currentInfo: (kind, text) =>
+            currentInfo(kind, text, {
+              settings: () => current.companion,
+              now: () => Date.now(),
+              tz: systemTimeZone,
+              cachedWeather: () => companion.cachedWeather(),
+              fetchWeather: fetchMetWeather,
+              headlines: fetchHeadlines,
+              rate: fetchRate,
+            }),
+          now: () => Date.now(),
+          provider: () => chosenExternal() ?? { id: "local", ai },
+          localAvailable: () => aiAvail.chat,
+          saveDiary: keepDiary,
+        },
+        onChatState,
+      );
+      // A due check-in ("Feeling any better today?") is the cat's first word
+      // of the session - once, a little after start-up, never over something.
+      setTimeout(() => {
+        if (!current.companion.enabled || current.catOff) return;
+        void chat.dueFollowUpLine().then((line) => {
+          if (line && !bubbleRef.current) showCompanionCard([line], "followup");
+        });
+      }, 20_000);
+      // bench/persona-eval.mjs reads the routing of each message (never shown
+      // to users) and sends through the SAME send() the chat box uses.
+      (window as unknown as { __mewmuzeChat?: unknown }).__mewmuzeChat = {
+        send: (text: string) => chat.send(text),
+        state: () => chat.state(),
+        forget: () => chat.forgetConversation(),
+      };
+
+      // The dictation shortcut exists only while Local Voice is installed.
+      let registeredShortcut = "";
+      const toggleDictation = () => {
+        if (voice.state().phase === "recording") void voice.stop();
+        else if (!voice.active()) void voice.start("dictation");
+      };
+      const syncDictationShortcut = async () => {
+        const want = aiAvail.voice && current.companion.enabled ? current.companion.voice.shortcut : "";
+        if (want === registeredShortcut) return;
+        try {
+          const gs = await import("@tauri-apps/plugin-global-shortcut");
+          if (registeredShortcut) await gs.unregister(registeredShortcut).catch(() => undefined);
+          registeredShortcut = "";
+          if (want) {
+            await gs.register(want, (e) => {
+              if (e.state === "Pressed") toggleDictation();
+            });
+            registeredShortcut = want;
+          }
+        } catch {
+          // Taken by another app, or outside Tauri: dictation stays in the menu only.
+        }
+      };
+      cleanup.push(() => {
+        if (registeredShortcut) void import("@tauri-apps/plugin-global-shortcut").then((gs) => gs.unregister(registeredShortcut)).catch(() => undefined);
+        chat.close();
+        void voice.cancel();
+      });
+      const refreshAvail = async () => {
+        const [v, c, l] = await Promise.all([moduleStatus("voice"), moduleStatus("chat"), moduleStatus("chat-lite")]);
+        // Either chat model makes Local Chat available.
+        aiAvail = { voice: usable(v), chat: usable(c) || usable(l) };
+        aiChatReady = aiAvail.chat;
+        setAiAvailUI(aiAvail);
+        applyActivity();
+        await syncDictationShortcut();
+        // Conversations waiting for a summariser (left pending at the last
+        // quit, or while none was installed) get written now if one is here.
+        void diary.process();
+      };
+      void refreshAvail();
+      void onModuleStatus(() => void refreshAvail()).then((stop) => cleanup.push(stop));
+
+      /**
+       * Battery guard, on the existing 30 s companion tick - no timer of its
+       * own. With no model loaded and nothing running it returns at once.
+       */
+      const guardTick = async () => {
+        const busy = ai.busy() !== null || voice.active();
+        if (!busy && ai.chatState() !== "ready") return;
+        const st = await tauriBridge.status().catch(() => null);
+        if (!st) return;
+        const now = Date.now();
+        usageMonitor.push({ at: now, onBattery: power.onBattery, busy: busy || st.voiceBusy, cpuSeconds: st.cpuSeconds });
+        if (usageMonitor.evaluate(now, { recording: voice.active(), muted: current.companion.batteryGuardMuted }) === "warn") {
+          companion.notify.submit(
+            { id: `ai-guard:${now}`, kind: "system", priority: "normal", lines: GUARD_LINES, actions: GUARD_ACTIONS, createdAt: now, expiresAt: now + 30 * 60_000 },
+            now,
+          );
+          usageMonitor.quiet(now);
+          companion.pump();
+        }
+      };
+
+      const closeChatPanel = () => {
+        if (voice.state().mode === "chat") void voice.cancel();
+        chat.close();
+        setChatUI(null);
+      };
+      const closeVoicePanel = () => {
+        if (voice.active()) void voice.cancel();
+        else void voice.reset();
+        setVoiceUI(null);
+      };
+      const saveRecordingDialog = async () => {
+        try {
+          const { save } = await import("@tauri-apps/plugin-dialog");
+          const dest = await save({ defaultPath: "MewMuze recording.wav", filters: [{ name: "WAV audio", extensions: ["wav"] }] });
+          if (dest) await voice.saveRecording(dest);
+        } catch (e) {
+          showInfoBubble(`Could not save the recording: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      };
+
+      scheduler.register({
+        id: "companion",
+        intervalMs: 30_000,
+        network: false,
+        runInFullscreen: true,
+        run: () => {
+          // A Focus-mode session that ran at least ten minutes counts as done.
+          const sess = sessionRef.current;
+          if (lastFocus && sess !== lastFocus && Date.now() - lastFocus.startedAtMs >= 10 * 60_000) countToday("focusSessions");
+          lastFocus = sess?.kind === "focus" ? sess : null;
+          // A companion card nobody answered steps aside for everything else.
+          if (bubbleRef.current?.id.startsWith("cmp:") && Date.now() - companionShownAt > 90_000) setBubble(null);
+          companion.tick();
+          void guardTick();
+          // A conversation quiet for 20 minutes goes to the Diary (once per change).
+          const talk = chat.diarySession();
+          if (talk && Date.now() - talk.endedAt > 20 * 60_000) keepDiary(talk);
+        },
+      });
+      scheduler.register({
+        id: "power",
+        intervalMs: 3 * 60_000,
+        network: false,
+        runInFullscreen: true,
+        immediate: true,
+        run: async () => {
+          power = await readPowerStatus();
+          scheduler.setOnBattery(power.onBattery);
+          scheduler.setMode(effectiveMode(current.companion.powerMode, power));
+          ai.setMode(effectiveMode(current.companion.powerMode, power));
+        },
+      });
+      scheduler.register({
+        id: "calendar",
+        intervalMs: CALENDAR_POLL_MS,
+        network: true,
+        immediate: true,
+        run: async () => {
+          if (!current.calendar.connected || !current.calendar.icsUrl) {
+            calEvents = [];
+            return true;
+          }
+          const res = await pollCalendar(current.calendar.icsUrl);
+          if (!res || !res.ok) return false;
+          calEvents = res.events;
+          companion.onCalendar(res.events);
+          return true;
+        },
+      });
+      scheduler.register({ id: "weather", intervalMs: 60 * 60_000, network: true, immediate: true, run: () => companion.refreshWeather() });
+      scheduler.register({ id: "watchlists", intervalMs: 3 * 60 * 60_000, network: true, run: () => companion.refreshWatches() });
+      scheduler.register({ id: "news", intervalMs: 3 * 60 * 60_000, network: true, run: () => companion.refreshNews() });
+      scheduler.start();
+      cleanup.push(() => scheduler.stop());
+
+      const onOnline = () => {
+        online = true;
+        scheduler.notifyOnline();
+      };
+      const onOffline = () => {
+        online = false;
+      };
+      window.addEventListener("online", onOnline);
+      window.addEventListener("offline", onOffline);
+      cleanup.push(() => {
+        window.removeEventListener("online", onOnline);
+        window.removeEventListener("offline", onOffline);
+      });
+
+      onCompanionSettings = (next, prev) => {
+        const a = next.companion;
+        const b = prev.companion;
+        if (a.internetPaused !== b.internetPaused) void setNetPaused(a.internetPaused);
+        if (a.powerMode !== b.powerMode) {
+          scheduler.setMode(effectiveMode(a.powerMode, power));
+          // Threads and the idle unload change at the next safe boundary: a
+          // running reply or transcription is never interrupted.
+          ai.setMode(effectiveMode(a.powerMode, power));
+          if (a.powerMode === "saver" && !ai.busy() && !chatUIRef.current) void ai.unloadIdle();
+        }
+        if (a.voice.shortcut !== b.voice.shortcut || a.enabled !== b.enabled) void syncDictationShortcut();
+        if (a.location !== b.location || a.features.weather !== b.features.weather) void scheduler.runNow("weather");
+        if (a.interests !== b.interests || (a.features.news && !b.features.news)) void scheduler.runNow("news");
+        if (a.watches !== b.watches || (a.features.watchlists && !b.features.watchlists)) void scheduler.runNow("watchlists");
+        if (a.features.calendar !== b.features.calendar || next.calendar.connected !== prev.calendar.connected || next.calendar.icsUrl !== prev.calendar.icsUrl) {
+          void scheduler.runNow("calendar");
+        }
+        if (next.gmail.connected !== prev.gmail.connected || next.gmail.email !== prev.gmail.email || next.gmail.appPassword !== prev.gmail.appPassword) {
+          void scheduler.runNow("gmail");
+        }
+      };
+
+      const companionApi: CompanionPanelApi = {
+        status: async () => {
+          const snap = companion.snapshot();
+          const now = Date.now();
+          const tz = systemTimeZone();
+          return {
+            timeZone: tz,
+            history: snap.history,
+            watches: snap.watches,
+            routine: {
+              typicalStart: typicalStart(snap.routine, now, tz),
+              typicalFinish: typicalFinish(snap.routine, now, tz),
+              daysLearned: snap.routine.weekday.first.n + snap.routine.weekend.first.n,
+            },
+            scheduler: { ...scheduler.counters, jobs: scheduler.stats() },
+            net: await netStats(),
+            power,
+            effectiveMode: effectiveMode(current.companion.powerMode, power),
+            weatherUpdated: snap.weather?.fetchedAt ?? null,
+            ai: await (async () => {
+              const [v, c, l, st] = await Promise.all([moduleStatus("voice"), moduleStatus("chat"), moduleStatus("chat-lite"), tauriBridge.status().catch(() => null)]);
+              return {
+                voice: STATE_LABEL[v.state],
+                chat: usable(c) || !usable(l) ? STATE_LABEL[c.state] : `${STATE_LABEL[l.state]} (Lite)`,
+                chatLoaded: st?.chatLoaded ?? false,
+                chatMemoryMB: Math.round((st?.chatMemoryBytes ?? 0) / 1_048_576),
+                voiceBusy: st?.voiceBusy ?? false,
+                totalMemoryMB: st?.totalMemoryBytes ? Math.round(st.totalMemoryBytes / 1_048_576) : undefined,
+              };
+            })(),
+          };
+        },
+        clearData: () => {
+          companion.clearData();
+          // The learned rhythm is companion data too: it goes with the rest.
+          clearHabits();
+          habits = emptyHabits();
+          applyActivity();
+        },
+        deleteHistory: () => companion.deleteHistory(),
+        resetRoutine: () => {
+          companion.resetRoutine();
+          clearHabits();
+          habits = emptyHabits();
+          applyActivity();
+        },
+        showMyDay: () => showCompanionCard(companion.myDay(), "myday"),
+        briefing: () => void companion.briefing().then((lines) => showCompanionCard(lines, "briefing")),
+        checkWatches: () => void scheduler.runNow("watchlists"),
+        modules: {
+          status: moduleStatus,
+          download: moduleDownload,
+          pause: modulePause,
+          cancel: moduleCancel,
+          remove: async (id) => {
+            // Stop whatever runs from the folder first; the other module is untouched.
+            if (id === "chat" || id === "chat-lite") closeChatPanel();
+            if (id === "voice") closeVoicePanel();
+            await ai.forget(id);
+            const freed = await moduleRemove(id);
+            await refreshAvail();
+            return freed;
+          },
+          subscribe: onModuleEvents,
+        },
+        memory: {
+          // Everything that persists, in plain words: preferences, learned
+          // style and pending check-ins. Nothing is hidden.
+          list: async () => {
+            const items = (await loadMemory()).items.map((i) => ({ id: `pref:${i.key}`, label: describeItem(i) }));
+            const style = describeTraits(traits(await loadStyle())).map((label, n) => ({ id: `style:${n}`, label }));
+            const followUps = (await loadFollowUps()).map((f) => ({ id: `fu:${f.id}`, label: describeFollowUp(f) }));
+            return [...items, ...style, ...followUps];
+          },
+          forget: async (id) => {
+            if (id.startsWith("pref:")) await chat.setMemory(forgetItem(await loadMemory(), id.slice(5) as Parameters<typeof forgetItem>[1]));
+            else if (id.startsWith("style:")) await chat.forgetStyle();
+            else if (id.startsWith("fu:")) await chat.forgetFollowUp(id.slice(3));
+          },
+          clear: () => chat.clearAll(),
+        },
+        // The Diary is separate from memory: clearing one never clears the other.
+        diary: {
+          count: async () => (await diary.list()).length + (await diary.pendingCount()),
+          clear: () => diary.clear(),
+          dir: () => diary.dir(),
+        },
+      };
+
       // ---- command handling (tray + context menu share this) ----
       const command = (cmd: string) => {
         switch (cmd) {
@@ -1300,7 +2033,11 @@ export default function App() {
             setCatOff(false);
             return;
           case "settings":
+          case "settings:looks":
+          case "settings:chat":
+          case "settings:voice":
             if (current.catOff) setCatOff(false);
+            setSettingsPage(cmd === "settings" ? "home" : (cmd.slice(9) as SettingsPageId));
             setSettingsForeground(true);
             setPanelOpen(true);
             return;
@@ -1324,6 +2061,7 @@ export default function App() {
               if (quickToolsRef.current || workModeArmed) exitWorkMode();
               setSession(startFocus(Date.now()));
               engine.playOneShot("happy");
+              react("determined", 0.6, "salute");
             }
             return;
           case "break":
@@ -1336,11 +2074,41 @@ export default function App() {
             }
             return;
           case "tasks":
-            // Coming soon — the menu item is inert, nothing to do.
+            // Toggle, like the other panels beside the cat.
+            setMenu(null);
+            if (tasksUIRef.current) closeTasksPanel();
+            else {
+              void taskStore.load();
+              setTasksUI({ cat: catCssBox(), area: catCssArea() });
+            }
             return;
           case "calc-time":
             if (calcTimeRef.current || calcModeArmed) exitCalcMode();
             else enterCalcMode();
+            return;
+          case "my-day":
+            setMenu(null);
+            showCompanionCard(companion.myDay(), "myday");
+            return;
+          case "chat":
+            setMenu(null);
+            if (chatUIRef.current) {
+              closeChatPanel();
+              return;
+            }
+            // Without the optional module (and no OpenAI / Claude chosen), take the user to where it is added.
+            if (!aiAvail.chat && current.companion.chat.provider === "local") return command("settings:chat");
+            setChatUI({ cat: catCssBox(), area: catCssArea() });
+            void chat.open();
+            return;
+          case "recorder":
+            setMenu(null);
+            if (voiceUIRef.current) {
+              closeVoicePanel();
+              return;
+            }
+            if (!aiAvail.voice) return command("settings:voice");
+            setVoiceUI({ cat: catCssBox(), area: catCssArea() });
             return;
           case "photo-mode":
             // Toggle, like the other panels: the same menu entry closes it.
@@ -1362,10 +2130,15 @@ export default function App() {
             }
             return;
           case "quit":
-            void invokeSafe("quit_app");
+            // Tasks written first: an edit made a moment ago is still on its debounce.
+            // The chat goes to the Diary's pending list (encrypted, no model at
+            // quit); it is summarised at the next start.
+            void Promise.allSettled([taskStore.flush(), diary.hold(chat.diarySession())]).finally(() => void invokeSafe("quit_app"));
             return;
           case "about":
-            showInfoBubble("MewMuze — a tiny local cat. No network, no tracking. 🐈‍⬛");
+            // Paper build: companion features use the internet when switched on,
+            // so the production "no network" line would not be true here.
+            showInfoBubble("MewMuze Paper — a tiny cat that keeps an eye on your day. 🐈‍⬛");
             return;
           case "explain":
             // Privacy-safe: describes only the foreground app NAME + category.
@@ -1399,6 +2172,22 @@ export default function App() {
           case "resume":
             engine.command(cmd as "pause" | "resume", performance.now());
             applySettings({ ...current, paused: cmd === "pause" }, current);
+            return;
+          case "butterfly":
+            setMenu(null);
+            butterflyRequested = pickPath();
+            return;
+          case "gesture-hi":
+            setMenu(null);
+            if (engine.feel({ emotion: "happy", intensity: 0.75, source: "interaction" })) engine.gesture("wave");
+            return;
+          case "gesture-high-five":
+            setMenu(null);
+            if (engine.feel({ emotion: "excited", intensity: 0.7, source: "interaction" })) engine.gesture("highFive");
+            return;
+          case "tease":
+            setMenu(null);
+            engine.tease();
             return;
           case "pet":
           case "call":
@@ -1437,18 +2226,26 @@ export default function App() {
         dismissBubble: () => {
           const b = bubbleRef.current;
           if (!b) return;
+          if (b.id.startsWith("update:")) saveDismissed({ version: b.id.slice(7), at: Date.now() });
           if (b.id === "workrest") {
             activeUseS = 0;
             workRestShown = false;
           } else if (b.id.startsWith("sch:")) {
             setScheduled(completeScheduled(current.scheduledReminders, b.id.slice(4)));
+            countToday("remindersDone");
           } else if (b.id.startsWith("cal:")) {
             // Remember this event so the same alert doesn't reappear.
             dismissedCalKey = b.id.slice(4);
+          } else if (b.id.startsWith("cmp:")) {
+            // How fast it was dismissed teaches the companion what is unwanted.
+            companion.notify.dismissed(companionShownKind, Date.now() - companionShownAt);
           } else if (!b.id.startsWith("info-")) {
             reminders.dismiss(b.id, performance.now() / 1000);
+            countToday("remindersDone");
           }
           setBubble(null);
+          // Anything the companion queued behind this notice gets its turn.
+          window.setTimeout(() => companion.pump(), 1500);
         },
         snoozeBubble: () => {
           const b = bubbleRef.current;
@@ -1476,6 +2273,8 @@ export default function App() {
           if (b.id.startsWith("sch:")) {
             setScheduled(completeScheduled(current.scheduledReminders, b.id.slice(4)));
             engine.playOneShot("celebrate");
+            react("proud", 0.7, "thumbsUp");
+            countToday("remindersDone");
           }
           setBubble(null);
         },
@@ -1508,6 +2307,7 @@ export default function App() {
           setClipboardBadge(null);
           setClipboardPanel(null);
         },
+        closeTasks: closeTasksPanel,
         closeClipboard: () => {
           setClipboardPanel(null);
           clipboardController.close(current.clipboardAssistant.forgetAfterSeconds);
@@ -1516,6 +2316,51 @@ export default function App() {
         openClipboardLink,
         reactClipboard,
         holdPhotoPose,
+        companionAction: (action) => {
+          if (action.id === "update-install") {
+            setBubble(null);
+            if (offered) {
+              showInfoBubble(`Updating to ${offered}… MewMuze will restart by itself.`);
+              void installFoundUpdate(offered);
+            }
+            return;
+          }
+          if (action.id === "copy-dictation") void tauriVoiceBridge.copy(lastDictation);
+          else if (action.id === "ai-saver") {
+            applySettings({ ...current, companion: { ...current.companion, powerMode: "saver" } }, current);
+          } else if (action.id === "ai-keep") {
+            usageMonitor.quiet(Date.now());
+          } else if (action.id === "ai-mute") {
+            applySettings({ ...current, companion: { ...current.companion, batteryGuardMuted: true } }, current);
+          }
+          // Links only ever open in the browser, and only over https.
+          if (action.href?.startsWith("https://")) void openClipboardLink(action.href);
+          setBubble(null);
+          window.setTimeout(() => companion.pump(), 1500);
+        },
+        companionApi,
+        aiUI: {
+          chatSend: (text) => void chat.send(text),
+          chatCancel: () => chat.cancel(),
+          chatForget: () => chat.forgetConversation(),
+          chatRetry: () => void chat.retry(),
+          chatClose: closeChatPanel,
+          chatNew: () => chat.newChat(),
+          chatUseLocal: () => {
+            applySettings({ ...current, companion: { ...current.companion, chat: { ...current.companion.chat, provider: "local" } } }, current);
+            void chat.retry();
+          },
+          diary,
+          micStart: () => void voice.start("chat"),
+          micStop: () => void voice.stop(),
+          voiceStart: () => void voice.start("recorder"),
+          voiceStop: () => void voice.stop(),
+          voiceCancel: () => void voice.cancel(),
+          voiceCopy: (text) => void tauriVoiceBridge.copy(text),
+          voiceSave: () => void saveRecordingDialog(),
+          voiceNew: () => void voice.reset(),
+          voiceClose: closeVoicePanel,
+        },
       };
 
       // Validate only after the UI and cat are already running, then once per
@@ -1538,35 +2383,107 @@ export default function App() {
       cleanup.push(() => clearTimeout(initialLicenceCheck));
       cleanup.push(() => clearInterval(periodicLicenceCheck));
 
+      /** Download, verify and install the release `checkForUpdate` found, then restart. */
+      let installing = false;
+      const installFoundUpdate = async (version: string) => {
+        if (installing) return;
+        installing = true;
+        setUpdateStatus(`Downloading ${version}…`);
+        const failed = await installUpdate((f) => setUpdateStatus(`Downloading ${version}… ${Math.round(f * 100)}%`));
+        installing = false;
+        if (failed === null) {
+          setUpdateStatus("Restarting…");
+          return;
+        }
+        console.warn("update install failed:", failed);
+        const why = /sign|signature|verif/i.test(failed)
+          ? "The update didn't pass its safety check, so it wasn't installed."
+          : "The update didn't install. Try again from Settings → About.";
+        setUpdateStatus(why);
+        showInfoBubble(why);
+      };
+
       /**
-       * Look for a newer release. `manual` reports "you're up to date" too;
-       * the automatic launch check stays silent unless something is available.
+       * The small "new version" notice by the cat. It waits for a free moment
+       * (no other notice showing, the cat on screen) rather than pushing one
+       * aside, and "OK" quiets that version for a day.
        */
+      let offerTimer = 0;
+      const offerUpdate = (version: string) => {
+        window.clearTimeout(offerTimer);
+        if (!shouldNotify(version, loadDismissed(), Date.now())) return;
+        const busy = Boolean(bubbleRef.current) || current.catOff || fullscreenActive || isWithdrawn(fsState);
+        if (busy) {
+          offerTimer = window.setTimeout(() => offerUpdate(version), 2 * 60_000);
+          return;
+        }
+        setBubble({
+          id: `update:${version}`,
+          message: `MewMuze Paper ${version} is here ✨`,
+          snoozable: false,
+          actions: [{ id: "update-install", label: "Update" }],
+        });
+      };
+      cleanup.push(() => window.clearTimeout(offerTimer));
+
+      /**
+       * Look for a newer release. By hand (Settings → Check for updates) it
+       * installs what it finds; the automatic check only offers it.
+       */
+      let offered = "";
       const runUpdateCheck = async (manual: boolean) => {
-        setUpdateStatus("Checking for updates…");
+        if (installing) return;
+        if (manual) setUpdateStatus("Checking for updates…");
         const info = await checkForUpdate();
         if (info.error) {
-          setUpdateStatus(manual ? `Couldn't check for updates: ${info.error}` : "");
+          console.warn("update check failed:", info.error);
+          if (manual) setUpdateStatus(friendlyUpdateError(info.error));
           return;
         }
         if (!info.available) {
           setUpdateStatus(manual ? "You're on the latest version." : "");
           return;
         }
-        setUpdateStatus(`Downloading v${info.version}…`);
-        const ok = await installUpdate((f) => setUpdateStatus(`Downloading v${info.version}… ${Math.round(f * 100)}%`));
-        setUpdateStatus(ok ? "Restarting…" : "Update failed — try again later.");
+        offered = info.version;
+        if (manual) return installFoundUpdate(info.version);
+        setUpdateStatus(`Version ${info.version} is available — press Check now to install it.`);
+        offerUpdate(info.version);
       };
-      // Silent check shortly after launch so fixes arrive without nagging.
-      if (current.autoUpdate) {
-        const t = setTimeout(() => void runUpdateCheck(false), 8000);
-        cleanup.push(() => clearTimeout(t));
-      }
+      // Shortly after launch, then every few hours for a copy left running for days.
+      const autoCheck = () => {
+        if (current.autoUpdate) void runUpdateCheck(false);
+      };
+      const firstUpdateCheck = setTimeout(autoCheck, 8000);
+      const updateTimer = setInterval(autoCheck, UPDATE_CHECK_EVERY_MS);
+      cleanup.push(() => {
+        clearTimeout(firstUpdateCheck);
+        clearInterval(updateTimer);
+      });
 
       try {
         const { listen } = await import("@tauri-apps/api/event");
         const un = await listen<string>("tray-command", (ev) => command(ev.payload));
         cleanup.push(() => un());
+        // Tray Quit gives the page a moment (tray.rs) to write pending Tasks.
+        const unQuit = await listen("app-quitting", () => {
+          void taskStore.flush();
+          void diary.hold(chat.diarySession());
+        });
+        const onPageHide = () => void taskStore.flush();
+        window.addEventListener("pagehide", onPageHide);
+        cleanup.push(() => {
+          unQuit();
+          window.removeEventListener("pagehide", onPageHide);
+          void taskStore.flush();
+        });
+        // The Look Preview window is a separate webview and cannot touch the
+        // live cat; "Wear" there asks for it here, through the same settings
+        // path as Settings itself. Nothing else it sends is acted on.
+        const unWear = await listen<{ action: string; id: string }>("look-preview-action", (ev) => {
+          if (ev.payload?.action !== "wear" || typeof ev.payload.id !== "string") return;
+          applySettings({ ...current, selectedCostumeId: ev.payload.id }, current);
+        });
+        cleanup.push(() => unWear());
       } catch {
         /* no tray events outside Tauri */
       }
@@ -1587,38 +2504,45 @@ export default function App() {
       // full-screen app — and mail must keep arriving and queueing there, so
       // the whole batch is waiting when the user comes back rather than being
       // silently missed. Nothing is drawn from here; it only fills the stack.
-      const pollMailOnce = () => {
+      //
+      // Paper: the timer is now the CompanionScheduler's (still running while
+      // full-screen, as before), so it backs off on failure, pauses offline
+      // and polls less often on battery. A failed poll resolves false.
+      const pollMailOnce = async (): Promise<boolean> => {
         if (!current.gmail.connected || !current.gmail.email || !current.gmail.appPassword) {
           lastGmailUid = 0; // reset baseline so a reconnect doesn't burst
+          lastMail = null;
           if (mailItemsRef.current.length > 0) setMailItems([]);
-          return;
+          return true;
         }
-        if (gmailPolling) return;
+        if (gmailPolling) return true;
         gmailPolling = true;
-        void pollGmail(current.gmail.email, current.gmail.appPassword).then((st) => {
-          gmailPolling = false;
-          if (!st || !st.ok) return;
-          if (lastGmailUid === 0) {
-            lastGmailUid = st.latestUid; // first poll = baseline, never notifies
-            return;
-          }
-          const fresh = newMessages(lastGmailUid, st);
-          if (fresh.length === 0) return;
-          // Advance the baseline whether or not the notification is wanted, so
-          // turning notifications back on doesn't replay old mail.
-          lastGmailUid = Math.max(lastGmailUid, st.latestUid);
-          if (!current.gmail.notify) return;
-          setMailItems((prev) => addMail(prev, fresh));
-          // Only react where the reaction can actually be seen.
-          if (!isWithdrawn(fsState) && !fullscreenActive && !current.catOff) {
-            engine.playOneShot("wave");
-            sound.play("meow");
-          }
-        });
+        const st = await pollGmail(current.gmail.email, current.gmail.appPassword);
+        gmailPolling = false;
+        if (!st || !st.ok) return false;
+        lastMail = st;
+        if (lastGmailUid === 0) {
+          lastGmailUid = st.latestUid; // first poll = baseline, never notifies
+          return true;
+        }
+        const fresh = newMessages(lastGmailUid, st);
+        if (fresh.length === 0) return true;
+        // Advance the baseline whether or not the notification is wanted, so
+        // turning notifications back on doesn't replay old mail.
+        lastGmailUid = Math.max(lastGmailUid, st.latestUid);
+        companion.onMail(fresh);
+        if (!current.gmail.notify) return true;
+        setMailItems((prev) => addMail(prev, fresh));
+        // Only react where the reaction can actually be seen.
+        if (!isWithdrawn(fsState) && !fullscreenActive && !current.catOff) {
+          engine.playOneShot("wave");
+          react("curious", 0.6);
+          sound.play("meow");
+        }
+        return true;
       };
-      pollMailOnce(); // establish the baseline now, not a minute from now
-      const gmailTimer = setInterval(pollMailOnce, GMAIL_POLL_MS);
-      cleanup.push(() => clearInterval(gmailTimer));
+      // Immediate: establish the baseline now, not a minute from now.
+      scheduler.register({ id: "gmail", intervalMs: GMAIL_POLL_MS, network: true, runInFullscreen: true, immediate: true, run: pollMailOnce });
 
       // ---- main loop ----
       let last = performance.now();
@@ -1633,12 +2557,18 @@ export default function App() {
       // Rate-limited logging so a persistent per-frame error can never flood
       // the console (which itself becomes a memory/perf problem over hours).
       let loopErrAt = 0;
+      /** The frame interval the last frame asked for (see loopBody). */
+      let wantInterval = 1000 / 60;
+      let slowTimer: ReturnType<typeof setTimeout> | undefined;
       const loop = (t: number) => {
         if (disposed) return;
         // Reschedule FIRST: a throw in the body must never stop the loop, so the
         // cat degrades to a stutter rather than freezing dead — the app stays
-        // alive and self-heals on the next good frame.
-        raf = requestAnimationFrame(loop);
+        // alive and self-heals on the next good frame. A deliberately slow loop
+        // (asleep, peeking, hidden) waits on a timer instead of waking the
+        // renderer at every vsync only to skip the frame.
+        if (wantInterval > 20) slowTimer = setTimeout(() => loop(performance.now()), wantInterval);
+        else raf = requestAnimationFrame(loop);
         try {
           loopBody(t);
         } catch (err) {
@@ -1671,8 +2601,9 @@ export default function App() {
             : peeking
               ? 1000 / 20 // peeking out from behind a fullscreen app
               : sleeping
-                ? 1000 / 30 // asleep: only slow breathing and a drifting tail
+                ? 1000 / 15 // asleep: only slow breathing and a drifting tail
                 : 1000 / 60; // cap high-refresh displays without reducing active smoothness
+        wantInterval = interval;
         const elapsed = t - last;
         if (elapsed + 1.5 < interval) return;
         last = t;
@@ -1724,6 +2655,8 @@ export default function App() {
             // The cat is about to walk off screen and the window is about to be
             // hidden; there is nothing left to photograph.
             closePhotoMode();
+            // Tasks too (saved on the way): it would sit on a hidden overlay.
+            closeTasksPanel();
             break;
           case "fadeOut":
             vis.target = 0;
@@ -1792,6 +2725,7 @@ export default function App() {
           const petActive = current.pettingEnabled && petting.update(sample, overCat, drag.isDragging, now);
           engine.setPetting(petActive);
           petActiveThisFrame = petActive;
+          if (petActive) playedSinceTick = true;
           if (petActive) sound.play("purr");
 
           // The cat always SEES the cursor (eyes and head keep tracking it);
@@ -1808,7 +2742,8 @@ export default function App() {
               !calcTimeRef.current &&
               // The engine already refuses to wander while a photo pose is
               // held; clearing this too keeps the intent in one obvious place.
-              !photoModeRef.current,
+              !photoModeRef.current &&
+              !tasksUIRef.current,
           );
         }
 
@@ -1828,8 +2763,24 @@ export default function App() {
         // Context resolver (priority: agent > dance > writing > typing > reading > scroll).
         const dancing = mediaPlaying && !peeking;
         // Performance finished: take a bow, then resume whatever it was doing.
-        if (micWasActive && !micActive) engine.playOneShot("bow");
+        if (micWasActive && !micActive) {
+          engine.playOneShot("bow");
+          react("proud", 0.6);
+        } else if (micActive && !micWasActive) react("curious", 0.5);
         micWasActive = micActive;
+        // Music starting is a small pleasure; the dance loop does the rest.
+        if (dancing && !wasDancing) react("happy", 0.55, undefined, "ambient");
+        wasDancing = dancing;
+        if (frame % 600 === 0) {
+          const h = new Date().getHours();
+          const part = h >= 5 && h < 11 ? "morning" : h >= 21 || h < 5 ? "evening" : "day";
+          if (part !== partOfDay) {
+            // A bright start to the morning, a drowsy lean late in the evening.
+            if (part === "morning") react("happy", 0.45, undefined, "ambient");
+            else if (part === "evening") react("sleepy", 0.4, undefined, "ambient");
+            partOfDay = part;
+          }
+        }
 
         // Outranks every other loop. workModeArmed flips at the strike, so the
         // cat is already suited up before the flash clears, not after.
@@ -1894,7 +2845,7 @@ export default function App() {
                     ? "clipboardHold"
                     : micActive
                     ? "sing"
-                    : agentLoop ??
+                    : moodHoldAnim() ?? agentLoop ??
           (dancing
             ? "danceBop"
             : appCategory === "writing" && typingLevel !== "none"
@@ -1920,7 +2871,12 @@ export default function App() {
         // coding or during motivation mode. The customer's chosen built-in
         // accessory returns as soon as the temporary reaction ends.
         const baseAccessory = effective.appearance.accessory;
-        const wantedAccessory = toolsOpen
+        // While Settings is open the preview must show exactly what the user
+        // picked. Swapping in glasses because an IDE happens to be focused made
+        // the preview contradict the dropdown right beside it.
+        const wantedAccessory = panelOpenRef.current
+          ? baseAccessory
+          : toolsOpen
           ? ("sunglasses" as const) // part of the costume, not gated by licence
           : dancing && mediaPlaying
             ? ("headphones" as const)
@@ -1978,8 +2934,10 @@ export default function App() {
         if (snap.completed) {
           const name = current.userName ? `${current.userName}, ` : "";
           if (snap.completed === "focus") {
+            countToday("focusSessions");
             // Session finished: this is the milestone the placard is for.
             placardUntil = now + PLACARD_MS;
+            react("victory", 0.85);
             showInfoBubble(`${name}focus done — take a break! ☕`);
             sound.play("meow");
           } else {
@@ -2026,20 +2984,15 @@ export default function App() {
           if (due) {
             setBubble({ id: due.id, message: due.message, snoozable: true });
             engine.playOneShot(due.kind === "stretch" ? "stretch" : "happy");
+            // Caring, not nagging: a determined little nod for a stretch, a warm look for water.
+            react(due.kind === "stretch" ? "determined" : "affectionate", 0.55);
             sound.play("meow");
           }
         }
 
-        // ---- Google Calendar connector: poll the feed, warn before events ----
+        // ---- Google Calendar connector: warn before events ----
+        // (Paper: the feed itself is fetched by the CompanionScheduler.)
         if (current.calendar.connected && current.calendar.icsUrl) {
-          if (!fullscreenActive && now >= nextCalAt && !calPolling) {
-            calPolling = true;
-            nextCalAt = now + CALENDAR_POLL_MS;
-            void pollCalendar(current.calendar.icsUrl).then((res) => {
-              calPolling = false;
-              if (res && res.ok) calEvents = res.events;
-            });
-          }
           if (frame % 30 === 0 && current.calendar.notify && !fullscreenActive) {
             const alert = calendarAlert(calEvents, Date.now(), current.calendar.earlyWarnMin, current.userName);
             if (alert && alert.id !== dismissedCalKey) {
@@ -2081,7 +3034,10 @@ export default function App() {
           // swallows nothing — every click passes through to the app behind it
           // and the panel looks frozen.
           calcTimeRef.current ||
-          photoModeRef.current
+          photoModeRef.current ||
+          chatUIRef.current ||
+          voiceUIRef.current ||
+          tasksUIRef.current
         )
           overUI = true;
         else if (
@@ -2128,6 +3084,31 @@ export default function App() {
           void setClickThrough(desiredThrough);
         }
 
+        if (costumeOverlayEpoch() !== traitsEpoch) {
+          traitsEpoch = costumeOverlayEpoch();
+          engine.setCostumeTraits(activeCostumeTraits());
+        }
+
+        // ---- the butterfly: only while a visit is on, nothing between visits ----
+        const butterflyBlocked =
+          drag.isDragging || photoModeRef.current !== null || fullscreenActive || current.catOff || peeking || sleeping;
+        if (butterfly) {
+          const on = !butterflyBlocked && butterfly.update(dt, engine.getRender(), engine);
+          if (!on) {
+            butterfly.cancel(engine);
+            butterfly = null;
+            nextButterflyAt = nextVisitMs(now);
+          }
+        } else if (now >= nextButterflyAt) {
+          nextButterflyAt = nextVisitMs(now);
+          // Only into a quiet moment: never over a notice, a session or the tools.
+          const quiet = !bubbleRef.current && sessionRef.current === null && !toolsOpen && !calcOpen && engine.state.isGrounded;
+          if (current.butterflyVisits && !butterflyBlocked && quiet) butterfly = new ButterflyVisit(pickPath(), engine.getRender());
+        } else if (butterflyRequested && !butterflyBlocked) {
+          butterfly = new ButterflyVisit(butterflyRequested, engine.getRender());
+        }
+        butterflyRequested = null;
+
         engine.tick(dt, now);
 
         // Sound cues on animation transitions.
@@ -2144,10 +3125,10 @@ export default function App() {
           !engine.state.isDragging &&
           Math.abs(engine.state.velocityX) < 1 &&
           Math.abs(engine.state.velocityY) < 1;
-        const paintInterval = calmVisual ? 1000 / 30 : 1000 / 60;
+        const paintInterval = calmVisual && !butterfly ? 1000 / 30 : 1000 / 60;
         if (now - lastPaint + 1.5 >= paintInterval) {
           lastPaint = now;
-          rendererRef.current?.draw(engine.getRender(), worldW, worldH, vis.v);
+          rendererRef.current?.draw(engine.getRender(), worldW, worldH, vis.v, butterfly?.frame);
         }
 
         // Anchor for bubbles/notes/chips (CSS px above the cat). Updated EVERY
@@ -2163,7 +3144,8 @@ export default function App() {
           sessionRef.current !== null ||
           breakPickerRef.current ||
           clipboardBadgeRef.current ||
-          clipboardPanelRef.current;
+          clipboardPanelRef.current ||
+          dictationRef.current;
         if (clipboardPanelRef.current && frame % 6 === 0) {
           const previous = clipboardPanelRef.current;
           const nextCat = catCssBox();
@@ -2200,7 +3182,10 @@ export default function App() {
         }
       };
       raf = requestAnimationFrame(loop);
-      cleanup.push(() => cancelAnimationFrame(raf));
+      cleanup.push(() => {
+        cancelAnimationFrame(raf);
+        clearTimeout(slowTimer);
+      });
       cleanup.push(clearSpriteCache);
 
       // ---- periodic persistence of safe position ----
@@ -2278,7 +3263,14 @@ export default function App() {
           areaRight={anchor.areaRight}
         />
       )}
-      {pomoSnap.phase !== "idle" && <PomodoroChip snapshot={pomoSnap} x={anchor.x - anchor.size * 0.62} y={Math.max(6, anchor.y - anchor.size - 22)} />}
+      {pomoSnap.phase !== "idle" && bridge && (
+        <PomodoroChip
+          snapshot={pomoSnap}
+          x={anchor.x - anchor.size * 0.62}
+          y={Math.max(6, anchor.y - anchor.size - 22)}
+          onClose={() => bridge.command("pomodoro-stop")}
+        />
+      )}
       {bubble && bridge && (
         <RetroNotice
           bubble={bubble}
@@ -2289,6 +3281,7 @@ export default function App() {
           onDismiss={bridge.dismissBubble}
           onSnooze={bridge.snoozeBubble}
           onComplete={bridge.completeBubble}
+          onAction={bridge.companionAction}
         />
       )}
       {mailItems.length > 0 && !overlayHidden && bridge && (
@@ -2371,7 +3364,6 @@ export default function App() {
         <PhotoModePanel
           cat={photoMode.cat}
           area={photoMode.area}
-          theme={settingsUI.uiTheme}
           folder={settingsUI.photoFolder}
           onSelectionChange={bridge.holdPhotoPose}
           onFolderChange={(photoFolder) => bridge.updateSettings({ ...settingsUI, photoFolder })}
@@ -2380,6 +3372,46 @@ export default function App() {
           onClose={() => bridge.command("photo-mode")}
         />
       )}
+      {chatUI && bridge && (
+        <ChatPanel
+          cat={chatUI.cat}
+          area={chatUI.area}
+          name={settingsUI.companion.preferredName || settingsUI.userName}
+          chat={chatState}
+          voice={voiceState}
+          voiceAvailable={aiAvailUI.voice}
+          onSend={bridge.aiUI.chatSend}
+          onCancel={bridge.aiUI.chatCancel}
+          onForget={bridge.aiUI.chatForget}
+          onMicStart={bridge.aiUI.micStart}
+          onMicStop={bridge.aiUI.micStop}
+          onRetry={bridge.aiUI.chatRetry}
+          onClose={bridge.aiUI.chatClose}
+          onNewChat={bridge.aiUI.chatNew}
+          onUseLocal={bridge.aiUI.chatUseLocal}
+          diary={bridge.aiUI.diary}
+          diaryOn={settingsUI.companion.chat.diary}
+          diaryRev={diaryRev}
+          showMode={settingsUI.companion.chat.showActiveMode}
+          debugRouting={settingsUI.companion.chat.debugRouting}
+        />
+      )}
+      {voiceUI && bridge && (
+        <VoicePanel
+          cat={voiceUI.cat}
+          area={voiceUI.area}
+          voice={voiceState}
+          onStart={bridge.aiUI.voiceStart}
+          onStop={bridge.aiUI.voiceStop}
+          onCancel={bridge.aiUI.voiceCancel}
+          onCopy={bridge.aiUI.voiceCopy}
+          onSaveRecording={bridge.aiUI.voiceSave}
+          onNew={bridge.aiUI.voiceNew}
+          onClose={bridge.aiUI.voiceClose}
+        />
+      )}
+      <DictationChip voice={voiceState} catCx={anchor.x} catTop={anchor.y - anchor.size} />
+      {tasksUI && bridge && <TasksPanel cat={tasksUI.cat} area={tasksUI.area} store={taskStore} onClose={bridge.closeTasks} />}
       {quickTools && bridge && (
         <QuickToolsPanel
           cat={quickTools.cat}
@@ -2393,6 +3425,10 @@ export default function App() {
           workMode={quickTools !== null}
           session={session}
           clipboardEnabled={settingsUI.clipboardAssistant.mode !== "off"}
+          chatAvailable={aiAvailUI.chat || settingsUI.companion.chat.provider !== "local"}
+          voiceAvailable={aiAvailUI.voice}
+          catSize={settingsUI.catSize}
+          activityLevel={settingsUI.activityLevel}
           onCommand={(cmd: MenuCommand) => bridge.command(cmd)}
           onClose={() => setMenu(null)}
         />
@@ -2443,6 +3479,8 @@ export default function App() {
           onCheckUpdates={bridge.checkUpdates}
           onOpenLink={bridge.openClipboardLink}
           onVisibilityChange={setSettingsForeground}
+          companionApi={bridge.companionApi}
+          initialPage={settingsPage}
         />
       )}
     </>

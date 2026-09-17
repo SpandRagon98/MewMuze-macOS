@@ -8,10 +8,25 @@
 //!
 //! Shared by every costume painter; see corporateCat.ts and cyberpunkCat.ts.
 
-import { ART, type LimbPoint } from "../animation/spriteLoader";
+import { S, type LimbPoint } from "../animation/spriteLoader";
 
-/** Design units to device pixels, matching the renderer's own constant. */
-export const S = ART / 48;
+/**
+ * Scale a hex colour's channels by `factor`, then lift them by `lift`.
+ *
+ * How every costume derives its lit and shadow tones from one chosen colour,
+ * so the whole palette moves together when the customer picks a new one.
+ */
+export function shift(hex: string, factor: number, lift = 0): string {
+  const clamp = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
+  const n = parseInt(hex.slice(1), 16);
+  const r = clamp(((n >> 16) & 255) * factor + lift);
+  const g = clamp(((n >> 8) & 255) * factor + lift);
+  const b = clamp((n & 255) * factor + lift);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+/** Design units to device pixels: the renderer's own, live for the frame being drawn. */
+export { S };
 
 export type Ctx = CanvasRenderingContext2D;
 
@@ -133,6 +148,26 @@ export class Surface {
   /** Axis-aligned design-space rectangle. */
   rect(x: number, y: number, w: number, h: number, colour: string): void {
     this.poly([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], colour);
+  }
+
+  /**
+   * A rectangle filled on every other pixel, in a checkerboard.
+   *
+   * The pixel-art way to blend two tones. A hard edge between a lit band and
+   * the base reads as a flat stripe; a dithered step reads as a curved
+   * surface. Clipped to the body like everything else here.
+   */
+  dither(x: number, y: number, w: number, h: number, colour: string): void {
+    const x0 = Math.max(this.x0, Math.floor(x * S));
+    const x1 = Math.min(this.x1, Math.ceil((x + w) * S));
+    const y0 = Math.max(this.y0, Math.floor(y * S));
+    const y1 = Math.min(this.y1, Math.ceil((y + h) * S));
+    this.ctx.fillStyle = colour;
+    for (let py = y0; py < y1; py++) {
+      for (let px = x0; px < x1; px++) {
+        if (((px + py) & 1) === 0 && this.inside(px, py)) this.plot(px, py);
+      }
+    }
   }
 }
 

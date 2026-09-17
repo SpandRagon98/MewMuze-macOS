@@ -19,6 +19,7 @@ import {
   type SheetPreview,
 } from "../quicktools/sheets";
 import { baseName, countLabel, pickFolder } from "../quicktools/convert";
+import { Icon } from "./icons";
 
 type Busy = null | "convert" | "merge" | "split";
 
@@ -218,7 +219,8 @@ export function SpreadsheetTools() {
 
   return (
     <>
-      <div className="qt-section">CSV ↔ XLSX Converter</div>
+      <section className="qt-group">
+      <h3 className="qt-group-head">CSV ↔ XLSX Converter</h3>
       <div className="qt-row">
         <button className="pixel-btn" onClick={onChooseSource} disabled={working}>
           Choose file…
@@ -294,7 +296,10 @@ export function SpreadsheetTools() {
         </div>
       )}
 
-      <div className="qt-section">Merge Spreadsheet Files</div>
+      </section>
+
+      <section className="qt-group">
+      <h3 className="qt-group-head">Merge Spreadsheet Files</h3>
       <div className="qt-row">
         <button className="pixel-btn" onClick={onAddMerge} disabled={working}>
           Add files…
@@ -354,7 +359,7 @@ export function SpreadsheetTools() {
                 title="Remove"
                 aria-label={`Remove ${baseName(p)}`}
               >
-                ✕
+                <Icon name="close" size={12} />
               </button>
             </li>
           ))}
@@ -395,7 +400,10 @@ export function SpreadsheetTools() {
           : "one worksheet per file, in the order above"}
       </div>
 
-      <div className="qt-section">Split Excel Workbook</div>
+      </section>
+
+      <section className="qt-group">
+      <h3 className="qt-group-head">Split Excel Workbook</h3>
       <div className="qt-row">
         <button className="pixel-btn" onClick={onChooseBook} disabled={working}>
           Choose workbook…
@@ -450,6 +458,8 @@ export function SpreadsheetTools() {
         </button>
       </div>
       <div className="qt-hint">one file per worksheet, into a folder you choose</div>
+
+      </section>
 
       <div className="qt-status-slot">
         {working && (

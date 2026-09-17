@@ -40,6 +40,7 @@ const PANEL_REFS = [
   "breakPickerRef",
   "clipboardPanelRef",
   "calcTimeRef",
+  "tasksUIRef",
 ];
 
 describe("overlay interactivity wiring", () => {
@@ -56,13 +57,17 @@ describe("overlay interactivity wiring", () => {
     expect(clickThroughGate()).toContain("calcTimeRef.current");
   });
 
+  it("keeps Tasks clickable while it is open", () => {
+    expect(clickThroughGate()).toContain("tasksUIRef.current");
+  });
+
   it("suppresses cursor chasing while a tool panel is open", () => {
     // Otherwise the cat wanders off after the pointer while you are typing into
     // the panel, leaving it anchored to empty space.
     const start = APP.indexOf("engine.setCursorChasing(");
     expect(start).toBeGreaterThan(-1);
     const block = APP.slice(start, APP.indexOf(");", start));
-    for (const ref of ["quickToolsRef", "clipboardPanelRef", "calcTimeRef"]) {
+    for (const ref of ["quickToolsRef", "clipboardPanelRef", "calcTimeRef", "tasksUIRef"]) {
       expect(block, `${ref} should suppress chasing while open`).toContain(ref);
     }
   });

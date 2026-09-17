@@ -15,6 +15,25 @@ export interface CalEventRaw {
   minute: number;
   allDay: boolean;
   utc: boolean;
+  // ---- added for the Personal Companion; all optional, so the meeting alert
+  // above keeps working against a feed that lacks them. ----
+  /** iCal UID. Shared by every instance of a recurring series. */
+  uid?: string;
+  /** From DTEND or DURATION. */
+  durationMin?: number;
+  location?: string;
+  /** An https meeting link from URL, LOCATION or DESCRIPTION. */
+  link?: string;
+  /** STATUS:CANCELLED. */
+  cancelled?: boolean;
+  /** An instance expanded from an RRULE, or an override of one. */
+  recurring?: boolean;
+  /** For an override (RECURRENCE-ID): the slot it was moved from. */
+  origYear?: number;
+  origMonth?: number;
+  origDay?: number;
+  origHour?: number;
+  origMinute?: number;
 }
 
 export interface CalResult {
@@ -88,7 +107,8 @@ export function calendarAlert(
   let best: { alert: CalAlert; rank: number; start: number } | null = null;
 
   for (const e of events) {
-    if (e.allDay) continue; // all-day events don't get a timed alarm
+    // All-day events don't get a timed alarm; a cancelled one gets none at all.
+    if (e.allDay || e.cancelled) continue;
     const start = eventStartMs(e);
     const delta = start - nowMs; // >0 upcoming, <0 already started
     let phase: CalPhase | null = null;

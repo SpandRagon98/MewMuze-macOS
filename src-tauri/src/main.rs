@@ -1,22 +1,32 @@
 // Hide the console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio;
 mod calendar;
+mod chat_providers;
 mod clipboard;
+mod companion_net;
+mod companion_power;
 mod context;
 mod convert;
 mod costume;
 mod cursor;
+mod diary;
 mod dodo_license;
 mod gmail;
 mod input;
 mod license;
+mod local_ai;
 mod mic;
+mod modules;
 mod overlay;
 mod pdf_write;
 mod photo;
+mod preview;
+mod secure_store;
 mod settings;
 mod sheets;
+mod tasks;
 mod tray;
 mod trial;
 mod window_detection;
@@ -60,12 +70,16 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         // Native open/save dialogs for the Quick Tools conversions.
         .plugin(tauri_plugin_dialog::init())
+        // Paper: the dictation shortcut (registered only while Local Voice is installed).
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let win = app
                 .get_webview_window("main")
                 .expect("main overlay window must exist");
             overlay::init_overlay(&win)?;
             let handle = app.handle().clone();
+            modules::init(&handle);
+            audio::sweep_temp();
             tray::build_tray(&handle)?;
             input::init_scroll_hook();
             clipboard::init_clipboard_listener(&handle)?;
@@ -84,6 +98,7 @@ fn main() {
             overlay::set_activation_window_mode,
             overlay::minimize_activation_window,
             overlay::set_settings_window_mode,
+            preview::open_look_preview,
             overlay::minimize_settings_window,
             settings::load_settings,
             settings::save_settings,
@@ -117,6 +132,33 @@ fn main() {
             sheets::cancel_sheet_op,
             gmail::gmail_fetch,
             calendar::calendar_fetch,
+            companion_net::companion_http,
+            companion_net::companion_net_set_paused,
+            companion_net::companion_net_stats,
+            companion_power::power_status,
+            companion_power::approx_location,
+            modules::module_status,
+            modules::module_download,
+            modules::module_pause,
+            modules::module_remove,
+            local_ai::voice_transcribe,
+            local_ai::voice_cancel,
+            local_ai::chat_load,
+            local_ai::chat_unload,
+            local_ai::chat_generate,
+            local_ai::chat_cancel,
+            local_ai::chat_json,
+            local_ai::ai_status,
+            audio::audio_start,
+            audio::audio_level,
+            audio::audio_stop,
+            audio::audio_cancel,
+            audio::audio_discard,
+            audio::audio_save,
+            secure_store::secure_write,
+            secure_store::secure_read,
+            secure_store::secure_delete,
+            secure_store::dictation_paste,
             clipboard::clipboard_read_text,
             clipboard::clipboard_write_text,
             clipboard::clipboard_clear,
@@ -136,6 +178,18 @@ fn main() {
             photo::photo_reveal,
             photo::photo_capture_screen,
             quit_app,
+            tasks::tasks_load,
+            tasks::tasks_save,
+            tasks::tasks_quarantine,
+            chat_providers::provider_key_set,
+            chat_providers::provider_key_status,
+            chat_providers::provider_key_remove,
+            chat_providers::provider_request,
+            diary::diary_dir,
+            diary::diary_read,
+            diary::diary_write,
+            diary::diary_delete,
+            diary::diary_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MewMuze");

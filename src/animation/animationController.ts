@@ -99,7 +99,9 @@ export class AnimationController {
     const s = this.scratch;
     Object.assign(s, cur);
     s.legPhase = snapTo(lerpPhase(cur.legPhase, next.legPhase, t, def.loop), LEG_STEP);
-    s.headBob = snapTo(lerp(cur.headBob, next.headBob, t), BOB_STEP);
+    // The slowest loops (sleeping, lying, moping) breathe in half-unit steps:
+    // eighths are under a pixel, so they were repaints of the same picture.
+    s.headBob = snapTo(lerp(cur.headBob, next.headBob, t), def.fps <= 2 ? 0.5 : BOB_STEP);
     s.stride = snapTo(lerp(cur.stride, next.stride, t), STRIDE_STEP);
     // Baked pupil poses (the embarrassed glance, the book-reading scan) tween
     // too, so the eyes drift rather than jumping between positions.

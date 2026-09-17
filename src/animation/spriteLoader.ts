@@ -28,8 +28,13 @@
  * baseline, while still being 1.8x the pixels.
  */
 export const ART = 128;
-/** Design space is 48 units; S is the design-unit -> pixel scale. */
-const S = ART / 48;
+/**
+ * Design space is 48 units; S is the design-unit -> pixel scale for the frame
+ * being drawn. It follows the size the frame will be SHOWN at (see drawCat):
+ * drawing at 128 and nearest-scaling to 88 dropped every third row and column,
+ * so outlines came and went and the pixels looked unevenly sized.
+ */
+export let S = ART / 48;
 
 export type CatView = "side" | "front" | "back" | "threeQuarter";
 export type EyeState =
@@ -47,14 +52,39 @@ export type EyeState =
   /** Droopy, upward-gazing sad eyes. */
   | "sad"
   /** Narrowed glare with brows slanting in — the fed-up-with-you face. */
-  | "angry";
+  | "angry"
+  // ---- emotion engine (Paper) ----
+  /** Relaxed, lids lowered and lower lids lifted: the slow-blink "I like you". */
+  | "soft"
+  /** Heavy, flat upper lids - the side-eye and the smug "really?". */
+  | "smug"
+  /** Lids closing from above AND below: a suspicious slit. */
+  | "narrow"
+  /** Open, with a wet shine along the lower lid: about to cry. */
+  | "watery"
+  /** Big pupils: captivated (a butterfly at the nose) or adoring. */
+  | "dilated"
+  /** Star highlights: excited, victorious. */
+  | "sparkle";
+
+/**
+ * Brows, drawn as short strokes above the eyes (front views). Separate from
+ * the eye state so a feeling can combine them: worried brows over watery
+ * eyes, one raised brow over a smug lid.
+ */
+export type BrowState = "none" | "worried" | "sad" | "angry" | "raised" | "soft";
 
 /**
  * Whole-sprite colour shift. Part of the cache key, so keep the set small.
  * `panic` adds a warm exertion flush; `sad` desaturates it slightly.
  */
 export type CatTint = "none" | "panic" | "sad";
-export type EarState = "up" | "back" | "perk" | "flat";
+/**
+ * `down`: both ears lowered out to the sides (sad "airplane" ears).
+ * `forward`: perked and tipped in (curious). `asym`: one perked, one back
+ * (confused, suspicious) - the one state where the two ears differ.
+ */
+export type EarState = "up" | "back" | "perk" | "flat" | "down" | "forward" | "asym";
 export type TailState = "curl" | "up" | "flick" | "down" | "tuck" | "puff" | "wrap";
 export type BodyState = "stand" | "sit" | "crouch" | "lie" | "dangle" | "air" | "loaf" | "hang" | "climb" | "stretch";
 export type Gesture =
@@ -71,8 +101,29 @@ export type Gesture =
   | "knead"
   | "cheer"
   /** Both forepaws raised overhead and brought together — the alarm clap. */
-  | "clap";
-export type MouthState = "none" | "smile" | "open" | "yawn" | "frown" | "teeth";
+  | "clap"
+  // ---- gesture controller (Paper): one-paw and paw-to-face gestures ----
+  | "victory"
+  | "waveA"
+  | "waveB"
+  | "highFive"
+  | "thumbsUp"
+  | "point"
+  | "shrug"
+  | "facepalm"
+  | "wipe"
+  | "cover"
+  | "chin"
+  | "salute"
+  | "pawHeart"
+  | "dismiss"
+  | "stompUp"
+  | "stompDown"
+  | "reachL"
+  | "reachR"
+  /** Behind the Edgy gestures setting, off by default (see emotion/gestures.ts). */
+  | "middle";
+export type MouthState = "none" | "smile" | "open" | "yawn" | "frown" | "teeth" | "smirk" | "wobble" | "tongue" | "grin" | "o" | "flat";
 export type CatProp = "none" | "notebook" | "keyboard" | "book" | "mic" | "laptop" | "placard" | "bowl" | "calculator";
 
 export interface PoseSpec {
@@ -115,7 +166,23 @@ export interface PoseSpec {
   steam: boolean;
   hearts: boolean;
   zzz: boolean;
+  // ---- emotion engine (Paper). All discrete or quantised: each is a cache key. ----
+  /** Head roll in degrees, a multiple of HEAD_TILT_STEP within ±HEAD_TILT_MAX. Front views. */
+  headTilt: number;
+  brow: BrowState;
+  /** Crying, 0..TEAR_STAGES: 0 none, 1 watery, 2-3 a tear forming, 4-6 falling. */
+  tears: number;
+  sweat: boolean;
+  /** The little popping-vein mark of real irritation. */
+  anger: boolean;
+  sparkle: boolean;
 }
+
+/** Head tilt is quantised to this many degrees (a cache multiplier). */
+export const HEAD_TILT_STEP = 2;
+/** Beyond this a cat's head stops looking attached. */
+export const HEAD_TILT_MAX = 16;
+export const TEAR_STAGES = 6;
 
 /**
  * Number of distinct tail sway positions.
@@ -159,6 +226,12 @@ export const DEFAULT_POSE: PoseSpec = {
   steam: false,
   hearts: false,
   zzz: false,
+  headTilt: 0,
+  brow: "none",
+  tears: 0,
+  sweat: false,
+  anger: false,
+  sparkle: false,
 };
 
 // ---- appearance / palettes ----------------------------------------------
@@ -179,6 +252,8 @@ export type CatAccessory =
   | "watch"
   | "hat"
   | "cap"
+  | "earStuds"
+  | "faceMask"
   // Seasonal costumes (also selectable manually).
   | "santaHat"
   | "witchHat"
@@ -331,6 +406,13 @@ const HEART = "#ff5b8a";
 const ZCOL = "#9bdcff";
 const BLUSH = "#d96a7e";
 const STEAM = "#cfd4e0";
+/** Tears and sweat: a light fill inside a deeper edge, so they read on white fur and black fur alike. */
+const TEAR = "#a8e0ff";
+const TEAR_EDGE = "#3f8fd4";
+const ANGER_MARK = "#ff4d5e";
+const SPARKLE = "#ffe27a";
+/** Paw pads, shown when a palm faces out (high five, wave). */
+const PAD = "#f0a0b4";
 const CREAM = "#e9e4d8";
 /** Warm ginger used for the calico coat's third tone. */
 const GINGER = "#d98a3f";
@@ -376,13 +458,8 @@ const KEYS_CAP = "#5d5d6e";
 const KEYS_PRESSED = "#2a2a34";
 /** Keycap top bevel, impact flashes and motion trails. */
 const KEYS_HILITE = "#8e8ea6";
-const PHONES = "#d8455a";
-const PHONES_DARK = "#5a1e28";
 const GLASS_RIM = "#c9a15e";
 const GLASS_GLINT = "#bcd3e8";
-const SHADE_LENS = "#14161c";
-const SHADE_LIGHT = "#354b67";
-const SUNGLASS_RIM = "#080a0f";
 const BANDANA = "#e34f62";
 const BANDANA_DARK = "#7b2635";
 const WATCH_STRAP = "#3c465b";
@@ -390,6 +467,11 @@ const WATCH_FACE = "#72e2eb";
 const HAT = "#654329";
 const HAT_DARK = "#2d2018";
 const CAP = "#496fc5";
+const STUD = "#e9b949";
+const STUD_DARK = "#a77c1e";
+const MASK_FACE = "#cfe6f2";
+const MASK_FOLD = "#9dc0d4";
+const MASK_EDGE = "#eaf4fa";
 const CAP_LIGHT = "#7898e2";
 // Seasonal costume palette.
 const SANTA_RED = "#d8323c";
@@ -472,7 +554,9 @@ export function applyAppearanceStroke(source: HTMLCanvasElement): HTMLCanvasElem
   const canvas = document.createElement("canvas");
   canvas.width = source.width;
   canvas.height = source.height;
-  const ctx = canvas.getContext("2d");
+  // Read back below: a software canvas. At 256 px and up Chromium puts 2D
+  // canvases on the GPU, and each getImageData became a GPU readback.
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return source;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(source, 0, 0);
@@ -697,17 +781,35 @@ function drawTail(ctx: Ctx, root: Pt, control: Pt, tip: Pt, puff = false): void 
   blob(ctx, tip.x, tip.y, (puff ? 2.3 : 1.5) * SP.tail, (puff ? 2.3 : 1.5) * SP.tail, [FUR[1]]);
 }
 
+
+/** Each ear's state: `asym` perks the left ear and lays the right one back. */
+function earPair(state: EarState): [EarState, EarState] {
+  return state === "asym" ? ["perk", "back"] : [state, state];
+}
+
 function drawEar(ctx: Ctx, cx: number, baseY: number, direction: number, state: EarState): void {
+  if (state === "asym") state = "perk"; // views that draw one ear, or both the same way
   if (state === "flat" || state === "back") {
     const sign = direction || 1;
     tri(ctx, { x: cx - 3, y: baseY }, { x: cx + 3, y: baseY + 1 }, { x: cx + sign * 4.6, y: baseY - 1.6 }, FUR[2]);
     return;
   }
+  if (state === "down") {
+    // Sad "airplane" ears: lowered out to the sides, tips below the base line,
+    // inner ear still showing so they read as ears and not as a flat head.
+    const sign = direction || 1;
+    const tip = { x: cx + sign * 6.2, y: baseY + 1.8 };
+    tri(ctx, { x: cx - 2.6 * sign, y: baseY - 0.6 }, { x: cx + 1.2 * sign, y: baseY + 2.4 }, tip, FUR[2]);
+    tri(ctx, { x: cx - 0.8 * sign, y: baseY + 0.3 }, { x: cx + 1 * sign, y: baseY + 1.8 }, { x: tip.x - sign * 1.4, y: tip.y - 0.4 }, EAR_DARK);
+    return;
+  }
   // Clamp to the headroom above the skull: the siamese's tall ears (1.4x) were
   // having their tips sliced off by the top of the sprite on many poses.
-  const height = Math.min(baseY - 1.5, (state === "perk" ? 7 : 6.2) * SP.ear);
+  const tall = state === "perk" || state === "forward";
+  const height = Math.min(baseY - 1.5, (tall ? 7 : 6.2) * SP.ear);
   const halfW = 3.4 * (SP.ear > 1.15 ? 1.08 : 1); // tall ears widen a little too
-  const tipX = cx + direction * 0.8;
+  // Curious ears tip IN toward the thing being watched; normal ones flare out.
+  const tipX = cx + direction * (state === "forward" ? -0.9 : 0.8);
   tri(ctx, { x: cx - halfW, y: baseY + 1.2 }, { x: cx + halfW, y: baseY + 1.2 }, { x: tipX, y: baseY - height }, FUR[2]);
   tri(ctx, { x: cx - 1.9, y: baseY + 0.4 }, { x: cx + 2, y: baseY + 0.4 }, { x: tipX, y: baseY - height + 2 }, EAR_DARK);
   px(ctx, tipX - 0.4, baseY - height + 2.4, 1, 1.6, EAR_LIGHT);
@@ -719,6 +821,88 @@ function drawEar(ctx: Ctx, cx: number, baseY: number, direction: number, state: 
     blob(ctx, cx + out * 3.4, baseY - height * 0.44, 1.15, 0.95, [FUR[0], FUR[1]]);
     blob(ctx, cx - out * 1.9, baseY - height * 0.3, 1.2, 1, [FUR[0], FUR[1]]);
   }
+}
+
+/**
+ * The skull being drawn, so eyelids can be filled with the head's OWN shading.
+ * Filled with one flat fur tone, a lid showed as a pale bar across a shaded
+ * forehead. Set by the face painters for the duration of the face.
+ */
+let LID_HEAD: { cx: number; cy: number; rx: number; ry: number } | null = null;
+
+/** A lid rectangle (design units) in the head's shading. */
+function skinRect(ctx: Ctx, x: number, y: number, w: number, h: number): void {
+  if (!LID_HEAD) {
+    px(ctx, x, y, w, h, FUR[1]);
+    return;
+  }
+  const { cx, cy, rx, ry } = LID_HEAD;
+  const x0 = Math.round(x * S), y0 = Math.round(y * S);
+  const x1 = x0 + Math.max(1, Math.round(w * S)), y1 = y0 + Math.max(1, Math.round(h * S));
+  for (let py = y0; py < y1; py++) {
+    for (let pxl = x0; pxl < x1; pxl++) {
+      ctx.fillStyle = tone((pxl + 0.5 - cx * S) / (rx * S), (py + 0.5 - cy * S) / (ry * S), FUR);
+      ctx.fillRect(pxl, py, 1, 1);
+    }
+  }
+}
+
+/** A lid triangle in the head's shading. */
+function skinTri(ctx: Ctx, a: Pt, b: Pt, c: Pt): void {
+  if (!LID_HEAD) {
+    tri(ctx, a, b, c, FUR[1]);
+    return;
+  }
+  const { cx, cy, rx, ry } = LID_HEAD;
+  const A = { x: a.x * S, y: a.y * S }, B = { x: b.x * S, y: b.y * S }, C = { x: c.x * S, y: c.y * S };
+  const d = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
+  if (d === 0) return;
+  for (let y = Math.floor(Math.min(A.y, B.y, C.y)); y <= Math.ceil(Math.max(A.y, B.y, C.y)); y++) {
+    for (let x = Math.floor(Math.min(A.x, B.x, C.x)); x <= Math.ceil(Math.max(A.x, B.x, C.x)); x++) {
+      const wa = ((B.y - C.y) * (x + 0.5 - C.x) + (C.x - B.x) * (y + 0.5 - C.y)) / d;
+      const wb = ((C.y - A.y) * (x + 0.5 - C.x) + (A.x - C.x) * (y + 0.5 - C.y)) / d;
+      if (wa >= -0.02 && wb >= -0.02 && 1 - wa - wb >= -0.02) {
+        ctx.fillStyle = tone((x + 0.5 - cx * S) / (rx * S), (y + 0.5 - cy * S) / (ry * S), FUR);
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+}
+
+/** Brows must show on any coat: dark strokes on light fur, light strokes on dark fur. */
+function browColour(): string {
+  const [r, g, b] = hexToRgb(FUR[1]);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum < 0.4 ? mixHex(FUR[1], "#ffffff", 0.55) : FUR[3];
+}
+
+/**
+ * One brow over an eye centred at (cx, cy) with vertical radius ry. `outward`
+ * is +1 when the eye's outer corner is to the right. `raised` lifts only the
+ * right brow and presses the left one down - the one-eyebrow "really?".
+ */
+function drawBrow(ctx: Ctx, cx: number, cy: number, ry: number, outward: number, state: BrowState): void {
+  if (state === "none") return;
+  const out = outward >= 0 ? 1 : -1;
+  const w = 3.2;
+  const base = cy - ry - 1.5;
+  // Rise of the inner end and the outer end above `base` (negative = lower).
+  let inner = 0;
+  let outer = 0;
+  let arch = 0.5;
+  if (state === "worried") { inner = 1.3; outer = -0.4; arch = 0.2; }
+  else if (state === "sad") { inner = 1.8; outer = -0.9; arch = 0; }
+  else if (state === "angry") { inner = -1.4; outer = 0.7; arch = -0.1; }
+  else if (state === "soft") { inner = 0.1; outer = 0.1; arch = 0.7; }
+  else if (state === "raised") {
+    // The whole joke is the height difference, so it is big.
+    if (out > 0) { inner = 1.7; outer = 2.3; arch = 1.7; } // the raised one
+    else { inner = -0.7; outer = -0.3; arch = 0; } // pressed down over a squint
+  }
+  const colour = browColour();
+  const from = { x: cx - out * w * 0.55, y: base - inner };
+  const to = { x: cx + out * w * 0.5, y: base - outer };
+  stroke(ctx, from, { x: cx, y: (from.y + to.y) / 2 - arch }, to, state === "raised" && out > 0 ? 0.6 : 0.5, colour);
 }
 
 function clampPupil(v: number, limit: number): number {
@@ -753,7 +937,14 @@ function drawLashes(ctx: Ctx, cx: number, cy: number, rx: number, ry: number, ou
   lash(1.0, 0.4, 1.6, 0.7, 0.38);
 }
 
-function drawEye(ctx: Ctx, cx: number, cy: number, pose: PoseSpec, side = false, outward = 1): void {
+/** A four-point star highlight - the excited / victorious eye. */
+function starGlint(ctx: Ctx, x: number, y: number, r: number): void {
+  px(ctx, x - r, y - 0.25, r * 2, 0.5, EYE_SHINE);
+  px(ctx, x - 0.25, y - r, 0.5, r * 2, EYE_SHINE);
+  blob(ctx, x, y, r * 0.42, r * 0.42, [EYE_SHINE]);
+}
+
+function drawEye(ctx: Ctx, cx: number, cy: number, pose: PoseSpec, side = false, outward = 1, squint = 1): void {
   const state = pose.eyes;
   // Deliberately oversized chibi eyes — they are the single biggest driver of
   // how cute the cat reads, and at desktop-pet scale they need the extra size
@@ -780,18 +971,25 @@ function drawEye(ctx: Ctx, cx: number, cy: number, pose: PoseSpec, side = false,
   const panic = state === "panic";
   const sad = state === "sad";
   const angry = state === "angry";
+  const soft = state === "soft";
+  const smug = state === "smug";
+  const narrow = state === "narrow";
+  const watery = state === "watery";
+  const dilated = state === "dilated";
+  const sparkle = state === "sparkle";
   // Panic reads through the shrunken pupil, not a bulging eye — only a touch
   // larger than "wide", or the face stops looking like the same cat.
-  const eRx = rx + (wide ? 0.5 : 0) + (panic ? 0.45 : 0);
-  const eRy = focus
-    ? ry * 0.55
-    : half
-      ? ry * 0.72
-      : sad
-        ? ry * 0.92
-        : angry
-          ? ry * 0.62 // narrowed glare
-          : ry + (wide ? 0.6 : 0) + (panic ? 0.5 : 0);
+  const eRx = rx + (wide ? 0.5 : 0) + (panic ? 0.45 : 0) + (sparkle ? 0.25 : 0);
+  const eRy =
+    (focus
+      ? ry * 0.55
+      : half
+        ? ry * 0.72
+        : sad
+          ? ry * 0.92
+          : angry
+            ? ry * 0.62 // narrowed glare
+            : ry + (wide ? 0.6 : 0) + (panic ? 0.5 : 0) + (sparkle ? 0.3 : 0)) * squint;
   // Sad eyes gaze slightly upward, which is most of what makes them read as
   // pleading rather than merely droopy.
   const offsetY = state === "up" ? -1.1 : state === "down" ? 1.1 : sad ? -0.5 : 0;
@@ -800,8 +998,10 @@ function drawEye(ctx: Ctx, cx: number, cy: number, pose: PoseSpec, side = false,
 
   // Big prominent pupil: sized as a fraction of the iris so it stays large and
   // glossy at every eye shape, leaving only a thin bright rim of colour.
-  const fx = panic ? 0.42 : focus ? 0.86 : wide ? 0.66 : 0.82;
-  const fy = panic ? 0.46 : focus ? 0.92 : wide ? 0.76 : 0.86;
+  // Pupil size carries a lot of feeling: blown wide when captivated, pinched
+  // to a slit when suspicious or scared.
+  const fx = panic ? 0.42 : dilated ? 0.94 : narrow ? 0.6 : focus ? 0.86 : wide ? 0.66 : 0.82;
+  const fy = panic ? 0.46 : dilated ? 0.95 : narrow ? 0.8 : focus ? 0.92 : wide ? 0.76 : 0.86;
   const pRx = eRx * fx;
   const pRy = eRy * fy;
   const pxOff = clampPupil(pose.pupilX, Math.max(0, eRx - pRx));
@@ -810,12 +1010,51 @@ function drawEye(ctx: Ctx, cx: number, cy: number, pose: PoseSpec, side = false,
 
   // Double highlight = the glossy chibi sparkle (kept large so the big pupils
   // still read as bright and friendly, never flat or staring).
-  blob(ctx, cx + pxOff - pRx * 0.35, cy + offsetY + pyOff - pRy * 0.4, 1.35, 1.5, [EYE_SHINE]);
-  blob(ctx, cx + pxOff + pRx * 0.3, cy + offsetY + pyOff + pRy * 0.35, 0.75, 0.8, [EYE_SHINE]);
+  if (sparkle) {
+    starGlint(ctx, cx + pxOff - pRx * 0.3, cy + offsetY + pyOff - pRy * 0.36, 1.9);
+    blob(ctx, cx + pxOff + pRx * 0.32, cy + offsetY + pyOff + pRy * 0.38, 0.7, 0.75, [EYE_SHINE]);
+  } else {
+    blob(ctx, cx + pxOff - pRx * 0.35, cy + offsetY + pyOff - pRy * 0.4, 1.35, 1.5, [EYE_SHINE]);
+    blob(ctx, cx + pxOff + pRx * 0.3, cy + offsetY + pyOff + pRy * 0.35, 0.75, 0.8, [EYE_SHINE]);
+  }
+  if (watery || (pose.tears > 0 && !half)) {
+    // A third, trembling glint and a wet line welling up along the lower lid.
+    blob(ctx, cx + pxOff + pRx * 0.42, cy + offsetY + pyOff - pRy * 0.05, 0.55, 0.6, [EYE_SHINE]);
+    stroke(
+      ctx,
+      { x: cx - eRx * 0.85, y: cy + offsetY + eRy * 0.62 },
+      { x: cx, y: cy + offsetY + eRy * 1.02 },
+      { x: cx + eRx * 0.85, y: cy + offsetY + eRy * 0.62 },
+      0.42,
+      TEAR,
+    );
+  }
+
+  const lidLine = (y: number, slant = 0) =>
+    stroke(ctx, { x: cx - eRx, y: y - slant }, { x: cx, y }, { x: cx + eRx, y: y + slant }, 0.5, FUR[3]);
+  if (soft) {
+    // Upper lid lowered, lower lid lifted by the cheeks: a relaxed half-smile of an eye.
+    skinRect(ctx, cx - eRx, cy + offsetY - eRy, eRx * 2, eRy * 0.78);
+    lidLine(cy + offsetY - eRy * 0.22);
+    skinRect(ctx, cx - eRx, cy + offsetY + eRy * 0.5, eRx * 2, eRy * 0.55);
+    stroke(ctx, { x: cx - eRx * 0.8, y: cy + offsetY + eRy * 0.62 }, { x: cx, y: cy + offsetY + eRy * 0.3 }, { x: cx + eRx * 0.8, y: cy + offsetY + eRy * 0.62 }, 0.4, FUR[3]);
+  }
+  if (smug) {
+    // A heavy, level upper lid down to the middle of the eye.
+    skinRect(ctx, cx - eRx, cy + offsetY - eRy, eRx * 2, eRy * 1.02);
+    lidLine(cy + offsetY + eRy * 0.02, side ? -0.25 : outward * 0.25);
+  }
+  if (narrow) {
+    // Lids closing from above and below leave a slit.
+    skinRect(ctx, cx - eRx, cy + offsetY - eRy, eRx * 2, eRy * 0.72);
+    skinRect(ctx, cx - eRx, cy + offsetY + eRy * 0.42, eRx * 2, eRy * 0.62);
+    lidLine(cy + offsetY - eRy * 0.28);
+    lidLine(cy + offsetY + eRy * 0.42);
+  }
 
   if (half) {
     // Relaxed upper lid.
-    px(ctx, cx - eRx, cy + offsetY - eRy, eRx * 2, eRy * 0.85, FUR[1]);
+    skinRect(ctx, cx - eRx, cy + offsetY - eRy, eRx * 2, eRy * 0.85);
     stroke(ctx, { x: cx - eRx, y: cy + offsetY - eRy * 0.15 }, { x: cx, y: cy + offsetY - eRy * 0.05 }, { x: cx + eRx, y: cy + offsetY - eRy * 0.15 }, 0.5, FUR[3]);
   }
   if (sad) {
@@ -832,13 +1071,10 @@ function drawEye(ctx: Ctx, cx: number, cy: number, pose: PoseSpec, side = false,
       FUR[3],
     );
     // Lid fill above the slant so the eye reads as genuinely hooded.
-    tri(
-      ctx,
+    skinTri(ctx,
       { x: cx + outer * eRx, y: cy + offsetY - eRy * 0.3 },
       { x: cx + inner * eRx, y: cy + offsetY - eRy * 1.1 },
-      { x: cx + outer * eRx, y: cy + offsetY - eRy * 1.3 },
-      FUR[1],
-    );
+      { x: cx + outer * eRx, y: cy + offsetY - eRy * 1.3 });
   }
   // Lashes ride on top of the eye so they stay visible over the iris.
   if (EYELASHES) drawLashes(ctx, cx, cy + offsetY, eRx, eRy, outward);
@@ -855,13 +1091,10 @@ function drawEye(ctx: Ctx, cx: number, cy: number, pose: PoseSpec, side = false,
       0.9,
       FUR[3],
     );
-    tri(
-      ctx,
+    skinTri(ctx,
       { x: cx + inner * eRx, y: cy + offsetY - eRy * 0.2 },
       { x: cx + outer * eRx, y: cy + offsetY - eRy * 1.2 },
-      { x: cx + inner * eRx, y: cy + offsetY - eRy * 1.4 },
-      FUR[1],
-    );
+      { x: cx + inner * eRx, y: cy + offsetY - eRy * 1.4 });
   }
 }
 
@@ -894,6 +1127,39 @@ function drawMouth(ctx: Ctx, hx: number, my: number, mouth: MouthState): void {
     case "smile":
       stroke(ctx, { x: hx - 2.4, y: my - 0.6 }, { x: hx, y: my + 1.2 }, { x: hx + 2.4, y: my - 0.6 }, 0.5, MOUTH);
       break;
+    case "smirk":
+      // One corner up, one flat: the savage little "mm-hm". Wide, with a
+      // dimple, because at desktop size a subtle smirk is no smirk at all.
+      stroke(ctx, { x: hx - 2.3, y: my + 0.4 }, { x: hx + 0.4, y: my + 1.1 }, { x: hx + 2.9, y: my - 1.1 }, 0.5, MOUTH);
+      px(ctx, hx + 2.8, my - 1.6, 0.55, 0.6, MOUTH);
+      break;
+    case "wobble":
+      // The trembling crying mouth: a small downturned zigzag.
+      stroke(ctx, { x: hx - 2.1, y: my + 1.1 }, { x: hx - 1.4, y: my + 0.1 }, { x: hx - 0.6, y: my + 0.7 }, 0.4, MOUTH);
+      stroke(ctx, { x: hx - 0.6, y: my + 0.7 }, { x: hx + 0.1, y: my + 0.1 }, { x: hx + 0.8, y: my + 0.7 }, 0.4, MOUTH);
+      stroke(ctx, { x: hx + 0.8, y: my + 0.7 }, { x: hx + 1.5, y: my + 0.1 }, { x: hx + 2.1, y: my + 1.1 }, 0.4, MOUTH);
+      break;
+    case "tongue":
+      // The ω with a tongue poking out: a cheeky blep.
+      stroke(ctx, { x: hx - 1.8, y: my - 0.3 }, { x: hx - 0.9, y: my + 0.7 }, { x: hx, y: my - 0.1 }, 0.4, MOUTH);
+      stroke(ctx, { x: hx, y: my - 0.1 }, { x: hx + 0.9, y: my + 0.7 }, { x: hx + 1.8, y: my - 0.3 }, 0.4, MOUTH);
+      blob(ctx, hx + 0.2, my + 1.35, 0.95, 1.05, [TONGUE]);
+      px(ctx, hx + 0.1, my + 0.9, 0.35, 0.9, "#c85a70");
+      break;
+    case "grin":
+      // Wide open delight, corners up.
+      blob(ctx, hx, my + 0.9, 2.7, 1.7, [FUR[3]]);
+      px(ctx, hx - 2.7, my - 0.3, 5.4, 1.1, FUR[1]); // flatten the top into a D
+      blob(ctx, hx, my + 1.8, 1.5, 0.75, [TONGUE]);
+      stroke(ctx, { x: hx - 3.1, y: my - 0.4 }, { x: hx - 2.7, y: my + 0.5 }, { x: hx - 2.3, y: my + 0.8 }, 0.4, MOUTH);
+      stroke(ctx, { x: hx + 3.1, y: my - 0.4 }, { x: hx + 2.7, y: my + 0.5 }, { x: hx + 2.3, y: my + 0.8 }, 0.4, MOUTH);
+      break;
+    case "o":
+      blob(ctx, hx, my + 0.8, 1.05, 1.2, [FUR[3]]);
+      break;
+    case "flat":
+      px(ctx, hx - 1.7, my + 0.3, 3.4, 0.45, MOUTH);
+      break;
     default:
       // Tiny contented "ω" smile — the default friendly face.
       stroke(ctx, { x: hx - 1.8, y: my - 0.3 }, { x: hx - 0.9, y: my + 0.7 }, { x: hx, y: my - 0.1 }, 0.4, MOUTH);
@@ -906,13 +1172,6 @@ function ring(ctx: Ctx, cx: number, cy: number, r: number, width: number, color:
   for (let i = 0; i < 26; i++) {
     const a = (i / 26) * Math.PI * 2;
     blob(ctx, cx + Math.cos(a) * r, cy + Math.sin(a) * r, width, width, [color]);
-  }
-}
-
-function ellipseRing(ctx: Ctx, cx: number, cy: number, rx: number, ry: number, width: number, color: string): void {
-  for (let i = 0; i < 30; i++) {
-    const a = (i / 30) * Math.PI * 2;
-    blob(ctx, cx + Math.cos(a) * rx, cy + Math.sin(a) * ry, width, width, [color]);
   }
 }
 
@@ -1015,29 +1274,168 @@ function seasonalAccessory(ctx: Ctx, hx: number, hy: number, hrx: number, hry: n
   }
 }
 
+// ---- sunglasses and headphones ------------------------------------------
+
+const SHADE_FRAME = "#15161b";
+const SHADE_FRAME_HI = "#2e3038";
+const SHADE_RIVET = "#cfd4dc";
+// Dark at the brow, easing to violet at the cheek - the gradient in the
+// reference. Each band is its own polygon, so the alpha is laid down once.
+const SHADE_TOP = "rgba(16, 14, 24, 0.93)";
+const SHADE_MID = "rgba(40, 32, 62, 0.89)";
+const SHADE_LOW = "rgba(96, 80, 132, 0.84)";
+const SHADE_GLINT = "rgba(255, 255, 255, 0.26)";
+
+const HP_BAND = "#e8dcdd";
+const HP_BAND_HI = "#f8f2f2";
+const HP_BAND_SH = "#bca9ab";
+const HP_CUP = "#ece2e3";
+const HP_CUP_SH = "#c3b1b3";
+const HP_CUSHION = "#a39092";
+const HP_METAL = "#d4ccce";
+
+/** Fill a polygon given as a top edge and a bottom edge sampled across x. */
+function fillBand(ctx: Ctx, xs: number[], top: (x: number) => number, bottom: (x: number) => number, colour: string): void {
+  ctx.fillStyle = colour;
+  const pts: Pt[] = [
+    ...xs.map((x) => ({ x, y: top(x) })),
+    ...xs.slice().reverse().map((x) => ({ x, y: bottom(x) })),
+  ];
+  const sx = pts.map((p) => p.x * S);
+  const sy = pts.map((p) => p.y * S);
+  const y0 = Math.floor(Math.min(...sy));
+  const y1 = Math.ceil(Math.max(...sy));
+  // Scanline, half-open, so the three lens bands meet without a seam or an
+  // overlap - an overlap would double the alpha into a dark stripe.
+  for (let py = y0; py <= y1; py++) {
+    const scan = py + 0.5;
+    const cross: number[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const j = (i + 1) % pts.length;
+      const ay = sy[i];
+      const by = sy[j];
+      if ((ay <= scan && by > scan) || (by <= scan && ay > scan)) {
+        cross.push(sx[i] + ((scan - ay) / (by - ay)) * (sx[j] - sx[i]));
+      }
+    }
+    cross.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < cross.length; k += 2) {
+      const from = Math.round(cross[k]);
+      const to = Math.round(cross[k + 1]);
+      if (to > from) ctx.fillRect(from, py, to - from, 1);
+    }
+  }
+}
+
+/**
+ * Flat-top shield sunglasses, both eyes behind one lens.
+ *
+ * The lens runs from a straight brow down to a rounded lower edge that lifts
+ * into a V at the nose bridge, the way the reference does - and stays clear of
+ * the nose, which is 4.7 head-units below centre. Wide enough to cover an eye
+ * at its widest (5.8 + 5 units out) on every breed.
+ */
+function drawShades(ctx: Ctx, hx: number, hy: number, hrx: number): void {
+  const hs = SP.head;
+  const half = Math.min(11.2 * hs, hrx * 0.93);
+  const top = hy - 6.3 * hs;
+  const lc = 5.6 * hs;
+  const low = hy + 5.0 * hs;
+  const bottom = (x: number): number => {
+    const d = Math.abs(x - hx);
+    return d < lc
+      ? low - 3.6 * hs * ((lc - d) / lc) ** 2
+      : low - 3.2 * hs * ((d - lc) / (half - lc)) ** 2;
+  };
+  const xs: number[] = [];
+  for (let i = 0; i <= 24; i++) xs.push(hx - half + (2 * half * i) / 24);
+  const bandA = top + 4.3 * hs;
+  const bandB = hy + 1.2 * hs;
+  fillBand(ctx, xs, () => top, () => bandA, SHADE_TOP);
+  fillBand(ctx, xs, () => bandA, (x) => Math.min(bottom(x), bandB), SHADE_MID);
+  fillBand(ctx, xs, () => bandB, bottom, SHADE_LOW);
+  // A glint on the left lens: the cue that says glass, not a painted patch.
+  stroke(ctx, { x: hx - half * 0.74, y: top + 1.4 }, { x: hx - half * 0.66, y: top + 2.6 }, { x: hx - half * 0.5, y: top + 4 }, 0.5, SHADE_GLINT);
+  // Heavy matte brow bar, rivets at the corners, arms back to the ears.
+  px(ctx, hx - half - 0.3, top - 0.9 * hs, half * 2 + 0.6, 1.45 * hs, SHADE_FRAME);
+  px(ctx, hx - half - 0.3, top - 0.9 * hs, half * 2 + 0.6, 0.35 * hs, SHADE_FRAME_HI);
+  for (const d of [-1, 1] as const) {
+    blob(ctx, hx + d * (half - 0.9), top - 0.2 * hs, 0.45, 0.45, [SHADE_RIVET]);
+    stroke(
+      ctx,
+      { x: hx + d * half, y: top - 0.2 },
+      { x: hx + d * (half + 0.6), y: top - 0.5 },
+      { x: hx + d * hrx * 0.99, y: top - 0.7 },
+      0.85,
+      SHADE_FRAME,
+    );
+  }
+}
+
+/** The same shield in profile: one lens over the visible eye. */
+function drawShadesSide(ctx: Ctx, hx: number, hy: number, hrx: number): void {
+  const hs = SP.head;
+  const back = hx - 0.2 * hs;
+  const front = hx + 7.9 * hs;
+  const top = hy - 6.0 * hs;
+  const low = hy + 3.9 * hs;
+  const bottom = (x: number): number => low - 2.2 * hs * ((x - (hx + 3.3)) / (front - hx - 3.3)) ** 2;
+  const xs: number[] = [];
+  for (let i = 0; i <= 12; i++) xs.push(back + ((front - back) * i) / 12);
+  const bandA = top + 4.0 * hs;
+  const bandB = hy + 1.0 * hs;
+  fillBand(ctx, xs, () => top, () => bandA, SHADE_TOP);
+  fillBand(ctx, xs, () => bandA, (x) => Math.min(bottom(x), bandB), SHADE_MID);
+  fillBand(ctx, xs, () => bandB, bottom, SHADE_LOW);
+  stroke(ctx, { x: back + 2, y: top + 1.2 }, { x: back + 2.6, y: top + 2.4 }, { x: back + 3.4, y: top + 3.8 }, 0.5, SHADE_GLINT);
+  px(ctx, back - 0.2, top - 0.9 * hs, front - back + 0.4, 1.45 * hs, SHADE_FRAME);
+  px(ctx, back - 0.2, top - 0.9 * hs, front - back + 0.4, 0.35 * hs, SHADE_FRAME_HI);
+  blob(ctx, front - 0.8, top - 0.2 * hs, 0.45, 0.45, [SHADE_RIVET]);
+  stroke(ctx, { x: back, y: top - 0.2 }, { x: back - 2, y: top - 0.5 }, { x: hx - hrx + 1.2, y: top - 0.4 }, 0.85, SHADE_FRAME);
+}
+
+/** One over-ear cup: shell, a darker cushion on the head side, a slider above. */
+function hpCup(ctx: Ctx, cx: number, cy: number, rx: number, ry: number, inward: number): void {
+  blob(ctx, cx, cy, rx, ry, [HP_CUP, HP_CUP, HP_CUP_SH]);
+  // The cushion shows as a darker crescent on the side facing the head.
+  blob(ctx, cx + inward * rx * 0.46, cy, rx * 0.5, ry * 0.84, [HP_CUSHION]);
+  blob(ctx, cx - inward * rx * 0.22, cy - ry * 0.3, rx * 0.34, ry * 0.3, [HP_BAND_HI]);
+  px(ctx, cx - 0.55, cy - ry - 1.3, 1.1, 1.6, HP_METAL);
+}
+
+/** Padded band over the top of the head, from cup to cup. */
+function hpBand(ctx: Ctx, from: Pt, peak: Pt, to: Pt): void {
+  stroke(ctx, from, peak, to, 2.1, HP_BAND_SH);
+  stroke(ctx, from, peak, to, 1.5, HP_BAND);
+  // Thick enough to join up: at 0.5 the stroke broke into a row of beads.
+  stroke(ctx, { x: from.x, y: from.y - 0.5 }, { x: peak.x, y: peak.y - 0.55 }, { x: to.x, y: to.y - 0.5 }, 0.8, HP_BAND_HI);
+}
+
+/** Over-ear headphones seen from the front or from behind - the same shape. */
+function drawHeadphones(ctx: Ctx, hx: number, hy: number, hrx: number, hry: number): void {
+  const cupY = hy + 1.4;
+  hpBand(ctx, { x: hx - hrx + 0.6, y: cupY - 4 }, { x: hx, y: hy - hry - 4.4 }, { x: hx + hrx - 0.6, y: cupY - 4 });
+  for (const d of [-1, 1] as const) hpCup(ctx, hx + d * (hrx - 0.1), cupY, 3.3, 4.5, -d);
+}
+
+/**
+ * Two gold studs up the outer edge of one ear.
+ *
+ * Gold, not steel: against grey fur a steel stud disappears entirely.
+ */
+function drawEarStuds(ctx: Ctx, earX: number, baseY: number, dir: number, spread: number): void {
+  const outerX = earX + dir * spread;
+  const tipX = earX + dir * 0.8;
+  const tipY = baseY - 6.4 * SP.ear;
+  for (const f of [0.3, 0.55] as const) {
+    blob(ctx, outerX + (tipX - outerX) * f, baseY + 1.2 + (tipY - baseY - 1.2) * f, 0.95, 0.95, [STUD, STUD_DARK]);
+  }
+}
+
 function frontAccessory(ctx: Ctx, hx: number, hy: number, hrx: number, hry: number): void {
   if (seasonalAccessory(ctx, hx, hy, hrx, hry, 1)) return;
   if (accessory === "sunglasses") {
-    // Aviator shape: lens, bridge and temple are one continuous rim rather than
-    // three separate floating pieces — the old version left a visible gap of
-    // bare fur between each lens and its own bridge/temple.
-    const cy = hy - 0.4;
-    const lensRX = 4.6, lensRY = 3.4;
-    for (const d of [-1, 1] as const) {
-      const lensX = hx + d * 5.2;
-      blob(ctx, lensX, cy, lensRX, lensRY, [SHADE_LIGHT, SHADE_LENS]);
-      ellipseRing(ctx, lensX, cy, lensRX, lensRY, 0.7, SUNGLASS_RIM);
-      // Diagonal glare streak reading as a glass reflection, not a flat patch.
-      stroke(ctx, { x: lensX - 2.6, y: cy - 1.9 }, { x: lensX - 1, y: cy - 1.2 }, { x: lensX - 1.8, y: cy - 0.2 }, 0.5, GLASS_GLINT);
-      // Temple: a real arm from the lens rim out toward the ear, angled back
-      // slightly (as real glasses arms do) so it reads as an arm rather than a
-      // second rim thickening. Starts exactly on the lens's own outer edge so
-      // there is no seam between rim and arm.
-      stroke(ctx, { x: lensX + d * lensRX, y: cy }, { x: hx + d * hrx * 0.72, y: cy - 0.6 }, { x: hx + d * hrx * 0.94, y: cy - 1 }, 0.55, SUNGLASS_RIM);
-    }
-    // Bridge sits AT lens-centre height so it visibly meets both rims, not
-    // above them where it used to read as a disconnected eyebrow arc.
-    px(ctx, hx - 1.2, cy - 0.45, 2.4, 0.9, SUNGLASS_RIM);
+    drawShades(ctx, hx, hy, hrx);
   } else if (accessory === "glasses") {
     for (const d of [-1, 1] as const) ring(ctx, hx + d * 5.4, hy - 0.5, 4.4, 0.5, GLASS_RIM);
     px(ctx, hx - 1.4, hy - 1.2, 2.8, 0.8, GLASS_RIM);
@@ -1045,14 +1443,7 @@ function frontAccessory(ctx: Ctx, hx: number, hy: number, hrx: number, hry: numb
     px(ctx, hx + hrx - 2.4, hy - 1.4, 1.8, 0.7, GLASS_RIM);
     px(ctx, hx - 8, hy - 3, 1.6, 0.7, GLASS_GLINT);
   } else if (accessory === "headphones") {
-    stroke(ctx, { x: hx - hrx + 0.8, y: hy }, { x: hx, y: hy - hry - 4 }, { x: hx + hrx - 0.8, y: hy }, 1.5, PHONES_DARK);
-    stroke(ctx, { x: hx - hrx + 0.8, y: hy }, { x: hx, y: hy - hry - 4 }, { x: hx + hrx - 0.8, y: hy }, 0.75, PHONES);
-    for (const d of [-1, 1] as const) {
-      const cupX = hx + d * (hrx - 0.2);
-      blob(ctx, cupX, hy + 1.3, 2.8, 4, [PHONES, PHONES_DARK]);
-      blob(ctx, cupX, hy + 1.3, 1.5, 2.5, [PHONES_DARK]);
-      px(ctx, cupX - 0.5, hy - 1, 1, 2.4, GLASS_GLINT);
-    }
+    drawHeadphones(ctx, hx, hy, hrx, hry);
   } else if (accessory === "bandana") {
     const collarY = hy + hry - 1.4;
     stroke(ctx, { x: hx - 7.2, y: collarY }, { x: hx, y: collarY + 1.4 }, { x: hx + 7.2, y: collarY }, 1.3, BANDANA_DARK);
@@ -1080,6 +1471,31 @@ function frontAccessory(ctx: Ctx, hx: number, hy: number, hrx: number, hry: numb
     px(ctx, hx - 8.4, topY + 1.4, 16, 1.8, CAP);
     px(ctx, hx + 5.5, topY + 2.5, 6.3, 1.4, CAP);
     px(ctx, hx - 1, topY - 3.2, 1, 2, CAP_LIGHT);
+  } else if (accessory === "earStuds") {
+    const earX = hrx * 0.67;
+    const earBase = hy - hry + 3;
+    drawEarStuds(ctx, hx - earX, earBase, -1, 3.4);
+    drawEarStuds(ctx, hx + earX, earBase, 1, 3.4);
+  } else if (accessory === "faceMask") {
+    const cy = hy + 5.0 * SP.head;
+    const rx = hrx * 0.62;
+    const ry = hry * 0.40;
+    blob(ctx, hx, cy, rx, ry, [MASK_EDGE, MASK_FACE, MASK_FOLD]);
+    for (const f of [-0.18, 0.22] as const) {
+      px(ctx, hx - rx * 0.74, cy + ry * f, rx * 1.48, 0.5, MASK_FOLD);
+    }
+    px(ctx, hx - rx * 0.9, cy - ry * 0.88, rx * 1.8, 0.7, MASK_EDGE);
+    // Loops routed outside the cheeks; through them they crossed the eyes.
+    for (const d of [-1, 1] as const) {
+      stroke(
+        ctx,
+        { x: hx + d * rx * 0.94, y: cy - ry * 0.4 },
+        { x: hx + d * (hrx + 1.2), y: cy - ry * 1.2 },
+        { x: hx + d * (hrx - 0.6), y: hy - hry * 0.3 },
+        0.5,
+        MASK_EDGE,
+      );
+    }
   }
 }
 
@@ -1087,21 +1503,20 @@ function sideAccessory(ctx: Ctx, hx: number, hy: number, hrx: number, hry: numbe
   // Costumes flop backwards in profile (the cat faces right).
   if (seasonalAccessory(ctx, hx, hy, hrx, hry, -1)) return;
   if (accessory === "sunglasses") {
-    blob(ctx, hx + 3.8, hy - 0.6, 4.25, 3.25, [SHADE_LIGHT, SHADE_LENS]);
-    ellipseRing(ctx, hx + 3.8, hy - 0.6, 4.2, 3.2, 0.55, SUNGLASS_RIM);
-    stroke(ctx, { x: hx - hrx + 1, y: hy - 1.6 }, { x: hx - 3, y: hy - 2 }, { x: hx + 0.2, y: hy - 1.1 }, 0.65, SUNGLASS_RIM);
-    px(ctx, hx + 1.4, hy - 2.5, 2.2, 0.65, GLASS_GLINT);
+    drawShadesSide(ctx, hx, hy, hrx);
   } else if (accessory === "glasses") {
     ring(ctx, hx + 3.6, hy - 0.8, 4, 0.5, GLASS_RIM);
     px(ctx, hx - hrx + 1, hy - 1.4, 5.4, 0.7, GLASS_RIM);
     px(ctx, hx + 1.4, hy - 3, 1.6, 0.7, GLASS_GLINT);
   } else if (accessory === "headphones") {
-    // Profile headband stays behind the visible ear and never crosses the eye.
-    stroke(ctx, { x: hx - 6.2, y: hy + 0.8 }, { x: hx - 5.4, y: hy - hry - 2.8 }, { x: hx + 1.4, y: hy - hry + 0.6 }, 1.45, PHONES_DARK);
-    stroke(ctx, { x: hx - 6.2, y: hy + 0.8 }, { x: hx - 5.4, y: hy - hry - 2.8 }, { x: hx + 1.4, y: hy - hry + 0.6 }, 0.7, PHONES);
-    blob(ctx, hx - 5.2, hy + 2, 2.8, 3.9, [PHONES, PHONES_DARK]);
-    blob(ctx, hx - 5.2, hy + 2, 1.45, 2.5, [PHONES_DARK]);
-    px(ctx, hx - 5.7, hy - 0.2, 1, 2.4, GLASS_GLINT);
+    // Profile band stays behind the visible ear and never crosses the eye; the
+    // near cup sits over the side of the head, shell facing out.
+    hpBand(ctx, { x: hx - 5.2, y: hy - 2.2 }, { x: hx - 5.0, y: hy - hry - 3.2 }, { x: hx + 1.6, y: hy - hry + 0.6 });
+    blob(ctx, hx - 5.2, hy + 2, 3.4, 4.6, [HP_CUP, HP_CUP, HP_CUP_SH]);
+    blob(ctx, hx - 5.2, hy + 2, 2.0, 3.0, [HP_CUP_SH]);
+    blob(ctx, hx - 5.2, hy + 2, 1.4, 2.3, [HP_CUP]);
+    blob(ctx, hx - 6.0, hy + 0.4, 0.9, 1.1, [HP_BAND_HI]);
+    px(ctx, hx - 5.75, hy - 3.9, 1.1, 1.6, HP_METAL);
   } else if (accessory === "bandana") {
     const collar = { x: hx - hrx * 0.48, y: hy + hry * 0.58 };
     stroke(ctx, { x: collar.x - 3.6, y: collar.y - 1 }, collar, { x: collar.x + 4.2, y: collar.y + 1 }, 1.25, BANDANA_DARK);
@@ -1124,6 +1539,21 @@ function sideAccessory(ctx: Ctx, hx: number, hy: number, hrx: number, hry: numbe
     blob(ctx, hx - 1.8, topY, 7.2, 3.9, [CAP_LIGHT, CAP]);
     px(ctx, hx - 7.5, topY + 1.3, 13.6, 1.7, CAP);
     px(ctx, hx + 3.8, topY + 2.1, 7.4, 1.4, CAP);
+  } else if (accessory === "earStuds") {
+    drawEarStuds(ctx, hx + 4.2, hy - hry + 2.6, 1, 3.2);
+  } else if (accessory === "faceMask") {
+    const cx = hx + hrx * 0.52;
+    const cy = hy + 3.0 * SP.head;
+    blob(ctx, cx, cy, hrx * 0.46, hry * 0.40, [MASK_EDGE, MASK_FACE, MASK_FOLD]);
+    px(ctx, cx - hrx * 0.34, cy, hrx * 0.68, 0.5, MASK_FOLD);
+    stroke(
+      ctx,
+      { x: cx - hrx * 0.4, y: cy - hry * 0.3 },
+      { x: hx - 1, y: hy + 1 },
+      { x: hx - 4.2, y: hy - hry + 4.4 },
+      0.5,
+      MASK_EDGE,
+    );
   }
 }
 
@@ -1399,6 +1829,108 @@ function drawHearts(ctx: Ctx, x: number, y: number): void {
   blob(ctx, x, y, 1.2, 1.2, [HEART]);
   blob(ctx, x + 2.1, y, 1.2, 1.2, [HEART]);
   tri(ctx, { x: x - 1.2, y: y + 0.4 }, { x: x + 3.3, y: y + 0.4 }, { x: x + 1, y: y + 3 }, HEART);
+}
+
+/** A drop: round at the bottom, pointed at the top, a deeper edge so it shows on any coat. */
+function teardrop(ctx: Ctx, x: number, y: number, r: number): void {
+  blob(ctx, x, y, r + 0.35, r + 0.4, [TEAR_EDGE]);
+  tri(ctx, { x: x - r - 0.2, y: y - r * 0.3 }, { x: x + r + 0.2, y: y - r * 0.3 }, { x, y: y - r * 2.3 - 0.5 }, TEAR_EDGE);
+  blob(ctx, x, y, r, r + 0.05, [TEAR]);
+  tri(ctx, { x: x - r * 0.75, y: y - r * 0.3 }, { x: x + r * 0.75, y: y - r * 0.3 }, { x, y: y - r * 2 }, TEAR);
+  px(ctx, x - r * 0.45, y - r * 0.25, 0.45, 0.45, EYE_SHINE);
+}
+
+/**
+ * Tears from the outer lower corner of each eye (`corners`), by stage:
+ * 2-3 a bead gathering on the lid, 4-6 the drop sliding down the cheek with
+ * a faint wet trail, and at 6 the next bead already forming. Stage 1 (watery)
+ * is drawn by drawEye. Drawn in head space, so the tears follow the head.
+ */
+function drawTears(ctx: Ctx, corners: Pt[], stage: number): void {
+  if (stage < 2) return;
+  for (const c of corners) {
+    if (stage === 2) teardrop(ctx, c.x, c.y + 0.3, 0.55);
+    else if (stage === 3) teardrop(ctx, c.x, c.y + 0.5, 0.85);
+    else {
+      const fall = [2.4, 4.6, 6.6][Math.min(2, stage - 4)];
+      px(ctx, c.x - 0.2, c.y + 0.4, 0.45, Math.max(0.5, fall - 1.4), TEAR);
+      teardrop(ctx, c.x + 0.15, c.y + fall, 0.8);
+      if (stage >= 6) teardrop(ctx, c.x, c.y + 0.3, 0.5);
+    }
+  }
+}
+
+/** Nervous sweat drop at the temple. */
+function drawSweat(ctx: Ctx, x: number, y: number): void {
+  teardrop(ctx, x, y, 0.95);
+}
+
+/** The manga "popping vein" of real irritation: four bent strokes around a gap. */
+function drawAngerMark(ctx: Ctx, x: number, y: number): void {
+  for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+    px(ctx, x + sx * 0.5 - (sx < 0 ? 1.1 : 0), y + sy * 1.4 - 0.25, 1.1, 0.55, ANGER_MARK);
+    px(ctx, x + sx * 1.4 - 0.25, y + sy * 0.5 - (sy < 0 ? 1.1 : 0), 0.55, 1.1, ANGER_MARK);
+  }
+}
+
+function drawSparkles(ctx: Ctx, x: number, y: number): void {
+  const star = (cx: number, cy: number, r: number) => {
+    px(ctx, cx - r, cy - 0.25, r * 2, 0.5, SPARKLE);
+    px(ctx, cx - 0.25, cy - r, 0.5, r * 2, SPARKLE);
+    blob(ctx, cx, cy, 0.45, 0.45, [EYE_SHINE]);
+  };
+  star(x, y, 1.7);
+  star(x + 3.2, y + 3.6, 1.1);
+}
+
+/**
+ * Draw the head unit rotated by `pose.headTilt` about the neck.
+ *
+ * The primitives fill whole pixels at integer positions, so a canvas rotation
+ * applied to them directly leaves hairline seams between the rotated pixels.
+ * Instead the head (ears, face, the costume's face layer, accessories, tears)
+ * is painted upright into a scratch canvas and composited rotated with
+ * nearest-neighbour sampling - the same crisp result as the rest of the art.
+ * No tilt, no scratch canvas: the old single-pass path.
+ */
+let tiltCanvas: HTMLCanvasElement | null = null;
+function withHeadTilt(ctx: Ctx, pose: PoseSpec, pivot: Pt, draw: (c: Ctx) => void): void {
+  const deg = pose.headTilt;
+  if (!deg || typeof document === "undefined") {
+    draw(ctx);
+    return;
+  }
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  tiltCanvas ??= document.createElement("canvas");
+  if (tiltCanvas.width !== w || tiltCanvas.height !== h) {
+    tiltCanvas.width = w;
+    tiltCanvas.height = h;
+  }
+  const t = tiltCanvas.getContext("2d", { willReadFrequently: true });
+  if (!t) {
+    draw(ctx);
+    return;
+  }
+  t.clearRect(0, 0, w, h);
+  t.imageSmoothingEnabled = false;
+  draw(t);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.translate(pivot.x * S, pivot.y * S);
+  ctx.rotate((deg * Math.PI) / 180);
+  ctx.translate(-pivot.x * S, -pivot.y * S);
+  ctx.drawImage(tiltCanvas, 0, 0);
+  ctx.restore();
+}
+
+/** Where a point on the upright head lands once the head is tilted about `pivot`. */
+export function tiltPoint(pose: PoseSpec, pivot: Pt, p: Pt): Pt {
+  if (!pose.headTilt) return p;
+  const a = (pose.headTilt * Math.PI) / 180;
+  const dx = p.x - pivot.x;
+  const dy = p.y - pivot.y;
+  return { x: pivot.x + dx * Math.cos(a) - dy * Math.sin(a), y: pivot.y + dx * Math.sin(a) + dy * Math.cos(a) };
 }
 
 function drawZzz(ctx: Ctx, x: number, y: number): void {
@@ -1741,7 +2273,22 @@ export interface FrontLimb {
   from: LimbPoint;
   ctrl: LimbPoint;
   to: LimbPoint;
+  /** A paw ON the face (facepalm, wiping a tear): drawn after the head, not under it. */
+  overFace?: boolean;
+  /** What the paw's toes are doing at `to`. */
+  digits?: PawDigits;
+  /** +1 / -1: which way a single pointing toe points. */
+  digitDir?: number;
 }
+
+/** Toe shapes that turn a round paw into a readable hand sign. */
+export type PawDigits = "v" | "up" | "one" | "thumb" | "open";
+
+/** The one-paw and paw-to-face gestures the gesture controller adds. */
+const PAW_GESTURES: ReadonlySet<Gesture> = new Set<Gesture>([
+  "victory", "waveA", "waveB", "highFive", "thumbsUp", "point", "shrug", "facepalm", "wipe", "cover", "chin",
+  "salute", "pawHeart", "dismiss", "stompUp", "stompDown", "reachL", "reachR", "middle",
+]);
 
 /**
  * Where a costume may paint, relative to the rest of the cat.
@@ -1753,6 +2300,28 @@ export interface FrontLimb {
 export type CostumeLayer = "torso" | "limbs" | "face";
 
 export type CostumePainter = (ctx: Ctx, pose: PoseSpec, layer: CostumeLayer) => void;
+
+/**
+ * What a costume covers, declared by the costume itself so the emotion system
+ * never checks for a particular costume: with the ears under a cowl the head
+ * and tail do more of the acting, and an ear or brow change nobody can see is
+ * not drawn (one sprite fewer in the cache).
+ */
+export interface CostumeTraits {
+  /** Draws its own fixed ears (a cowl, a helmet). */
+  hidesEars?: boolean;
+  /** Something over the brow line (a visor, a hood rim). */
+  hidesBrows?: boolean;
+  /** Eyes behind lenses or a visor: they read weaker. */
+  coversEyes?: boolean;
+}
+
+/** Where the head turns when it tilts, for art composited over the finished frame. */
+export function headTiltPivot(pose: PoseSpec): Pt | null {
+  if (!pose.headTilt || (pose.view !== "front" && pose.view !== "threeQuarter")) return null;
+  const head = bodyAnchors(pose).head;
+  return headPivot(pose, head.x, head.y, pose.view === "threeQuarter");
+}
 
 /**
  * Paint anything worn on the head, after the face is drawn.
@@ -1846,6 +2415,7 @@ export function frontLimbs(pose: PoseSpec, by: number): FrontLimb[] {
       { from: { x: 24 + g * 4.5, y: by }, ctrl: { x: 24 + g * 4.5, y: 40 }, to: { x: 24 + g * 4.5, y: 43.2 } },
     ];
   }
+  if (PAW_GESTURES.has(pose.gesture)) return gestureLimbs(pose, by);
   return [-1, 1].map((d) => ({
     from: { x: 24 + d * 4.4, y: by },
     ctrl: { x: 24 + d * 4.4, y: 40 },
@@ -1853,7 +2423,108 @@ export function frontLimbs(pose: PoseSpec, by: number): FrontLimb[] {
   }));
 }
 
+/**
+ * The point the head rolls about: the neck, just above where the neck bridge
+ * meets the jaw. Shared by the renderer and by paw-to-face gestures, so a paw
+ * lands on the face wherever the tilt has put it.
+ */
+export function headPivot(pose: PoseSpec, hx: number, hy: number, threeQuarter = false): Pt {
+  const lean = headLean(pose);
+  const hry = (threeQuarter ? TQ_SKULL_RY : FRONT_SKULL_RY) * SP.head;
+  return { x: hx + lean.dx, y: hy + lean.dy + hry * 0.72 };
+}
+
+/**
+ * Limb paths for the gesture controller's paw gestures. The right paw (as the
+ * viewer sees it) makes the sign; the other rests on the ground. Targets on the
+ * face are expressed relative to the drawn skull and rotated with the head, so
+ * a facepalm lands on the face at any tilt.
+ */
+function gestureLimbs(pose: PoseSpec, by: number): FrontLimb[] {
+  const anchors = frontAnchors(pose);
+  const skull = anchors.skull;
+  const pivot = headPivot(pose, 24, anchors.head.y);
+  const face = (ox: number, oy: number): LimbPoint => tiltPoint(pose, pivot, { x: skull.x + ox, y: skull.y + oy });
+  const rest = (d: number): FrontLimb => ({ from: { x: 24 + d * 4.5, y: by }, ctrl: { x: 24 + d * 4.5, y: 40 }, to: { x: 24 + d * 4.5, y: 43.2 } });
+  // Raised paws arc OUT past the shoulder rather than cutting across the chest.
+  const arm = (d: number, to: LimbPoint, extra: Partial<FrontLimb> = {}): FrontLimb => ({
+    from: { x: 24 + d * 5, y: by },
+    ctrl: { x: 24 + d * (to.y < by - 8 ? 11.5 : 8.5), y: (by + to.y) / 2 + 2 },
+    to,
+    ...extra,
+  });
+  switch (pose.gesture) {
+    case "victory": return [arm(1, { x: 37.2, y: 16.5 }, { digits: "v" }), rest(-1)];
+    case "middle": return [arm(1, { x: 37, y: 17.5 }, { digits: "up" }), rest(-1)];
+    case "waveA": return [arm(1, { x: 36.4, y: 18 }, { digits: "open" }), rest(-1)];
+    case "waveB": return [arm(1, { x: 38.4, y: 15.6 }, { digits: "open" }), rest(-1)];
+    case "highFive": return [arm(1, { x: 36.2, y: 19.4 }, { digits: "open" }), rest(-1)];
+    case "thumbsUp": return [arm(1, { x: 34.5, y: 28 }, { digits: "thumb" }), rest(-1)];
+    case "point": return [arm(1, { x: 38.5, y: 28 }, { digits: "one", digitDir: 1 }), rest(-1)];
+    case "dismiss": return [arm(1, { x: 36.8, y: by - 7.5 }, { digits: "open" }), rest(-1)];
+    case "reachL": return [arm(-1, { x: 11, y: by - 10 }, { digits: "open" }), rest(1)];
+    case "reachR": return [arm(1, { x: 37, y: by - 10 }, { digits: "open" }), rest(-1)];
+    case "shrug": return [-1, 1].map((d) => arm(d, { x: 24 + d * 11.5, y: by - 4.5 }, { digits: "open" }));
+    case "pawHeart": return [-1, 1].map((d) => arm(d, { x: 24 + d * 1.7, y: by - 5.5 }));
+    case "stompUp": return [arm(1, { x: 29.5, y: 38.6 }), rest(-1)];
+    case "stompDown": return [arm(1, { x: 29.5, y: 43.2 }), rest(-1)];
+    case "facepalm": return [arm(1, face(4.6, -0.8), { overFace: true }), rest(-1)];
+    case "wipe": return [arm(1, face(8.2, 2.4), { overFace: true }), rest(-1)];
+    case "salute": return [arm(1, face(8.6, -6.4), { overFace: true, digits: "open" }), rest(-1)];
+    case "chin": return [arm(1, face(2.4, 10.2), { overFace: true }), rest(-1)];
+    case "cover": return [-1, 1].map((d) => arm(d, face(d * 2.3, 6.2), { overFace: true }));
+    default: return [rest(-1), rest(1)];
+  }
+}
+
+/** Toes: two for a V, one up, one pointing, a thumb, or an open palm with its pads. */
+function drawDigits(ctx: Ctx, at: Pt, kind: PawDigits, dir = 1): void {
+  const toe = (tx: number, ty: number) =>
+    curvedLimb(ctx, { x: at.x + (tx - at.x) * 0.2, y: at.y - 0.6 }, { x: (at.x + tx) / 2, y: (at.y + ty) / 2 }, { x: tx, y: ty }, 0.62);
+  if (kind === "v") {
+    toe(at.x - 1.5, at.y - 3.9);
+    toe(at.x + 1.4, at.y - 3.9);
+  } else if (kind === "up") {
+    toe(at.x + 0.1, at.y - 4.3);
+  } else if (kind === "one") {
+    toe(at.x + dir * 3.6, at.y - 0.5);
+  } else if (kind === "thumb") {
+    toe(at.x - 0.3, at.y - 3.5);
+  } else {
+    // An open palm facing out: three toes spread, pink beans on the pads.
+    for (const [ox, oy] of [[-1.35, -1.75], [0, -2.25], [1.35, -1.75]] as const) {
+      blob(ctx, at.x + ox, at.y + oy, 0.78, 0.8, FUR);
+      blob(ctx, at.x + ox, at.y + oy + 0.1, 0.42, 0.42, [PAD]);
+    }
+    blob(ctx, at.x, at.y + 0.35, 1.15, 0.85, [PAD]);
+  }
+}
+
+function drawGestureLimb(ctx: Ctx, limb: FrontLimb): void {
+  curvedLimb(ctx, limb.from, limb.ctrl, limb.to, 1.7);
+  const open = limb.digits === "open";
+  blob(ctx, limb.to.x, limb.to.y, open ? 2.5 : 2.2, open ? 2.2 : 1.9, FUR);
+  if (limb.digits) drawDigits(ctx, limb.to, limb.digits, limb.digitDir ?? 1);
+}
+
+/** After the face: paws that touch it, and the little heart between heart-shaped paws. */
+function drawFacePaws(ctx: Ctx, pose: PoseSpec, by: number): boolean {
+  if (!PAW_GESTURES.has(pose.gesture)) return false;
+  let any = false;
+  for (const limb of frontLimbs(pose, by)) {
+    if (!limb.overFace) continue;
+    drawGestureLimb(ctx, limb);
+    any = true;
+  }
+  if (pose.gesture === "pawHeart") drawHearts(ctx, 23, by - 10.2);
+  return any;
+}
+
 function drawFrontFace(ctx: Ctx, hx: number, hy: number, pose: PoseSpec, threeQuarter = false): void {
+  withHeadTilt(ctx, pose, headPivot(pose, hx, hy, threeQuarter), (c) => paintFrontFace(c, hx, hy, pose, threeQuarter));
+}
+
+function paintFrontFace(ctx: Ctx, hx: number, hy: number, pose: PoseSpec, threeQuarter: boolean): void {
   const hrx = (threeQuarter ? TQ_SKULL_RX : FRONT_SKULL_RX) * SP.head;
   const hry = (threeQuarter ? TQ_SKULL_RY : FRONT_SKULL_RY) * SP.head;
   // Lean the whole head unit — skull, ears and face move together, so it reads
@@ -1862,8 +2533,9 @@ function drawFrontFace(ctx: Ctx, hx: number, hy: number, pose: PoseSpec, threeQu
   hx += lean.dx;
   hy += lean.dy;
 
-  drawEar(ctx, hx - hrx * 0.67, hy - hry + 3, -1, pose.ears);
-  drawEar(ctx, hx + hrx * 0.67, hy - hry + 3, 1, pose.ears);
+  const [earL, earR] = earPair(pose.ears);
+  drawEar(ctx, hx - hrx * 0.67, hy - hry + 3, -1, earL);
+  drawEar(ctx, hx + hrx * 0.67, hy - hry + 3, 1, earR);
   blob(ctx, hx, hy, hrx, hry, FUR);
   // Soft cheek shading + tiny cheek fluff jags.
   blob(ctx, hx - hrx * 0.5, hy + hry * 0.51, 4.2, 2.8, [FUR[1], FUR[2]]);
@@ -1884,26 +2556,66 @@ function drawFrontFace(ctx: Ctx, hx: number, hy: number, pose: PoseSpec, threeQu
   // Widened alongside the larger eyes so they stay two distinct eyes rather
   // than merging into one band on narrow-headed breeds.
   const eyeGap = (threeQuarter ? 5.0 : 5.8) * SP.head;
+  const leftX = hx - eyeGap;
+  const rightX = hx + (threeQuarter ? eyeGap + 1 : eyeGap);
+  const eyeY = hy - 0.5;
+  // One raised brow narrows the OTHER eye: the lopsided "really?" look.
+  const squintL = pose.brow === "raised" ? 0.8 : 1;
   // Outer corners point away from the muzzle, so the lashes mirror.
-  drawEye(ctx, hx - eyeGap, hy - 0.5, pose, false, -1);
-  drawEye(ctx, hx + (threeQuarter ? eyeGap + 1 : eyeGap), hy - 0.5, pose, false, 1);
+  LID_HEAD = { cx: hx, cy: hy, rx: hrx, ry: hry };
+  drawEye(ctx, leftX, eyeY, pose, false, -1, squintL);
+  drawEye(ctx, rightX, eyeY, pose, false, 1);
+  LID_HEAD = null;
+  const eyeRy = 5.4 * SP.eye;
+  drawBrow(ctx, leftX, eyeY, eyeRy * squintL, -1, pose.brow);
+  drawBrow(ctx, rightX, eyeY, eyeRy, 1, pose.brow);
 
   blob(ctx, hx, hy + 4.7 * SP.head, 0.9, 0.7, [NOSE]);
   drawMouth(ctx, hx, hy + 6.4 * SP.head, pose.mouth);
 
   if (pose.eyes !== "closed") {
-    // Very subtle short whiskers.
-    px(ctx, hx - hrx - 1.6, hy + 2.6, 2, 0.5, WHISKER);
-    px(ctx, hx - hrx - 1.2, hy + 4.4, 1.7, 0.5, WHISKER);
-    px(ctx, hx + hrx - 0.4, hy + 2.6, 2, 0.5, WHISKER);
-    px(ctx, hx + hrx - 0.5, hy + 4.4, 1.7, 0.5, WHISKER);
+    // Short whiskers that droop with sadness and lift with excitement - a
+    // small cue, but it is one of the first things that reads on a real cat.
+    const low = pose.eyes === "sad" || pose.brow === "sad" || pose.brow === "worried" || pose.tears > 0;
+    const high = pose.eyes === "wide" || pose.eyes === "sparkle" || pose.eyes === "dilated";
+    const dy = low ? 0.55 : high ? -0.45 : 0;
+    const dl = high ? 0.5 : low ? -0.3 : 0;
+    px(ctx, hx - hrx - 1.6 - dl, hy + 2.6 + dy, 2 + dl, 0.5, WHISKER);
+    px(ctx, hx - hrx - 1.2 - dl, hy + 4.4 + dy * 1.4, 1.7 + dl, 0.5, WHISKER);
+    px(ctx, hx + hrx - 0.4, hy + 2.6 + dy, 2 + dl, 0.5, WHISKER);
+    px(ctx, hx + hrx - 0.5, hy + 4.4 + dy * 1.4, 1.7 + dl, 0.5, WHISKER);
   }
   if (pose.blush) {
     blob(ctx, hx - hrx * 0.62, hy + 3.8 * SP.head, 1.9, 1, [BLUSH]);
     blob(ctx, hx + hrx * 0.62, hy + 3.8 * SP.head, 1.9, 1, [BLUSH]);
   }
+  // Tears before the costume's face layer, so a visor or cowl covers the part
+  // of a tear it would really cover and the rest runs down the visible cheek.
+  // Kept through a sniffle (eyes closed): a tear already falling keeps falling.
+  if (pose.tears > 0 && pose.eyes !== "happy") {
+    const rx = 4.5 * SP.eye;
+    drawTears(
+      ctx,
+      [
+        { x: leftX - rx * 0.62, y: eyeY + eyeRy * squintL * 0.78 },
+        { x: rightX + rx * 0.62, y: eyeY + eyeRy * 0.78 },
+      ],
+      pose.tears,
+    );
+  }
+  // The costume's face layer, then the accessory ON TOP of it. The other way
+  // round, a cap or glasses ended up under a cowl or a visor - so a customer
+  // could pick an accessory with a costume on and never see it. This is the
+  // one front face seam; all three front paths come through here.
+  paintCostume(ctx, pose, "face");
   frontAccessory(ctx, hx, hy, hrx, hry);
   if (pose.steam) drawSteam(ctx, hx - 2, hy - hry - 7);
+  // Emotional marks ride on top of everything, costume included.
+  // Placed in the clear bits of a crowded head: the sweat at the outer temple
+  // above the eye, the vein on the forehead between the left ear and the middle.
+  if (pose.sweat) drawSweat(ctx, hx + hrx * 0.9, hy - hry * 0.45);
+  if (pose.anger) drawAngerMark(ctx, hx - hrx * 0.45, hy - hry * 0.78);
+  if (pose.sparkle) drawSparkles(ctx, hx + hrx * 0.95, hy - hry * 0.72);
 }
 
 function drawFrontPaws(ctx: Ctx, pose: PoseSpec, by: number): void {
@@ -1957,6 +2669,15 @@ function drawFrontPaws(ctx: Ctx, pose: PoseSpec, by: number): void {
     blob(ctx, resting.to.x, resting.to.y, 2.8, 1.6, FUR);
     return;
   }
+  if (PAW_GESTURES.has(pose.gesture)) {
+    // Paws on the face come later (drawFacePaws), in front of the head.
+    for (const limb of limbs) if (!limb.overFace) drawGestureLimb(ctx, limb);
+    if (pose.gesture === "stompDown") {
+      px(ctx, 29.5 - 3.4, 42.2, 1.2, 0.5, EYE_SHINE);
+      px(ctx, 29.5 + 2.4, 42.2, 1.2, 0.5, EYE_SHINE);
+    }
+    return;
+  }
   for (const limb of limbs) {
     // Foreleg down to the paw. The paws sit on a fixed ground line while the
     // torso height varies by species (a leggy siamese rides higher on a
@@ -1999,7 +2720,6 @@ function drawHangingFront(ctx: Ctx, pose: PoseSpec): void {
     blob(ctx, 24 + d * 4.4 + sway, 44.2, 2.2, 1.3, FUR);
   }
   drawFrontFace(ctx, 24 + sway, 20 + pose.headBob, pose);
-  paintCostume(ctx, pose, "face");
 }
 
 function drawFront(ctx: Ctx, pose: PoseSpec): void {
@@ -2092,7 +2812,8 @@ function drawFront(ctx: Ctx, pose: PoseSpec): void {
   else if (pose.prop === "bowl") drawBowl(ctx, pose.legPhase);
 
   drawFrontFace(ctx, hx, hy, pose);
-  paintCostume(ctx, pose, "face");
+  // A paw on the face (and its sleeve) goes on after the head it touches.
+  if (pose.body !== "dangle" && pose.body !== "loaf" && drawFacePaws(ctx, pose, by + 2)) paintCostume(ctx, pose, "limbs");
   // After the face: the raised forelegs must pass IN FRONT of the head, and the
   // board sits above it, so both would be overpainted if drawn with the props.
   if (pose.prop === "placard") {
@@ -2310,7 +3031,9 @@ function drawSide(ctx: Ctx, pose: PoseSpec): void {
   blob(ctx, hx + hrx - 0.6, hy + 2.4, 0.8, 0.65, [NOSE]);
   stroke(ctx, { x: hx + hrx - 2.6, y: hy + 4.4 }, { x: hx + hrx - 1.4, y: hy + 5.2 }, { x: hx + hrx - 0.2, y: hy + 4.2 }, 0.4, MOUTH);
 
+  LID_HEAD = { cx: hx, cy: hy, rx: hrx, ry: hry };
   drawEye(ctx, hx + 3.3, hy - 0.8, pose, true, 1);
+  LID_HEAD = null;
   paintCostume(ctx, pose, "face");
   if (pose.eyes !== "closed") px(ctx, hx + hrx - 0.6, hy + 4.6, 1.9, 0.5, WHISKER);
   if (pose.blush) blob(ctx, hx + 2.2, hy + 4.4, 1.7, 0.9, [BLUSH]);
@@ -2363,10 +3086,7 @@ function drawBack(ctx: Ctx, pose: PoseSpec): void {
   paintCostume(ctx, pose, "torso");
   if (seasonalAccessory(ctx, 24, 15.5 + pose.headBob + drop * 0.55, 11.6 * hs, 10.4 * hs, 1)) return;
   if (accessory === "headphones") {
-    stroke(ctx, { x: 13, y: 15.5 }, { x: 24, y: 1.8 }, { x: 35, y: 15.5 }, 1.45, PHONES_DARK);
-    stroke(ctx, { x: 13, y: 15.5 }, { x: 24, y: 1.8 }, { x: 35, y: 15.5 }, 0.7, PHONES);
-    blob(ctx, 12.8, 17, 2.7, 3.8, [PHONES, PHONES_DARK]);
-    blob(ctx, 35.2, 17, 2.7, 3.8, [PHONES, PHONES_DARK]);
+    drawHeadphones(ctx, 24, 15.5 + pose.headBob + drop * 0.55, 11.6 * hs, 10.4 * hs);
   } else if (accessory === "bandana") {
     stroke(ctx, { x: 16.5, y: 24 }, { x: 24, y: 26 }, { x: 31.5, y: 24 }, 1.25, BANDANA_DARK);
     stroke(ctx, { x: 17, y: 23.7 }, { x: 24, y: 25.5 }, { x: 31, y: 23.7 }, 0.7, BANDANA);
@@ -2378,6 +3098,10 @@ function drawBack(ctx: Ctx, pose: PoseSpec): void {
   } else if (accessory === "cap") {
     blob(ctx, 23, 6, 8, 4.2, [CAP_LIGHT, CAP]);
     px(ctx, 15, 7.3, 16, 1.8, CAP);
+  } else if (accessory === "earStuds") {
+    // The ears are in full view from behind, so the studs must be too.
+    drawEarStuds(ctx, 24 - 7.5 * hs, 8.8 + drop * 0.55, -1, 3.4);
+    drawEarStuds(ctx, 24 + 7.5 * hs, 8.8 + drop * 0.55, 1, 3.4);
   }
 }
 
@@ -2410,7 +3134,6 @@ function drawThreeQuarter(ctx: Ctx, pose: PoseSpec): void {
     blob(ctx, (hx + 23) / 2, midY, Math.max(4.8, brx * 0.62), Math.max(3.4, halfSpan), FUR);
   }
   drawFrontFace(ctx, hx, hy, pose, true);
-  paintCostume(ctx, pose, "face");
 }
 
 // ---- assembly ------------------------------------------------------------
@@ -2447,14 +3170,17 @@ function applyTint(tint: CatTint): (() => void) | null {
   };
 }
 
-function drawCat(pose: PoseSpec): HTMLCanvasElement {
+function drawCat(pose: PoseSpec, size: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
-  canvas.width = ART;
-  canvas.height = ART;
-  const ctx = canvas.getContext("2d");
+  canvas.width = size;
+  canvas.height = size;
+  // Thousands of small fillRects: software raster. The desktop cat's frames
+  // are under 256 px and were software already; the Look Preview's 300 px
+  // frames went to the GPU, and the command traffic cost most of a core.
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return canvas;
   ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, ART, ART);
+  S = size / 48;
   // Resolve the tail's live sway for this frame. A sleeping cat's tail only
   // barely stirs; a curled/tucked tail moves less than a raised one.
   TAIL_SWAY = Math.sin((pose.tailPhase / TAIL_PHASE_STEPS) * Math.PI * 2);
@@ -2476,6 +3202,7 @@ function drawCat(pose: PoseSpec): HTMLCanvasElement {
     // Must restore even if a draw helper throws, or every later frame renders
     // with the washed palette.
     restoreTint?.();
+    S = ART / 48;
   }
   return canvas;
 }
@@ -2539,12 +3266,25 @@ export function spriteEpoch(): number {
   return appearanceEpoch;
 }
 
-function keyFor(pose: PoseSpec): string {
+function keyFor(pose: PoseSpec, size: number): string {
   return [
+    size,
     appearanceKey,
     // A frame painted while one costume was active must never be handed back
     // for another - or for none.
     costumeCacheKey,
+    poseKey(pose),
+  ].join("|");
+}
+
+/**
+ * What makes two poses the same frame. Other frame caches (Look Preview,
+ * Featured Looks) key on this too: keyed on the raw pose instead, every tick
+ * of a walk was a new float and a fresh 300 px paint - 1.1 cores in the
+ * preview window.
+ */
+export function poseKey(pose: PoseSpec): string {
+  return [
     pose.view,
     pose.body,
     pose.legPhase.toFixed(2),
@@ -2567,11 +3307,22 @@ function keyFor(pose: PoseSpec): string {
     pose.steam ? 1 : 0,
     pose.hearts ? 1 : 0,
     pose.zzz ? 1 : 0,
+    pose.headTilt,
+    pose.brow,
+    pose.tears,
+    pose.sweat ? 1 : 0,
+    pose.anger ? 1 : 0,
+    pose.sparkle ? 1 : 0,
   ].join("|");
 }
 
-export function renderFrame(pose: PoseSpec): HTMLCanvasElement {
-  const key = keyFor(pose);
+/**
+ * The frame for `pose`, rasterised at `size` device pixels - the size it will
+ * be shown at, so it is blitted 1:1 and never resampled. Defaults to ART.
+ */
+export function renderFrame(pose: PoseSpec, size = ART): HTMLCanvasElement {
+  size = Math.max(16, Math.round(size));
+  const key = keyFor(pose, size);
   const cached = frameCache.get(key);
   if (cached) {
     // Re-insert to mark as most-recently-used (Map preserves insertion order).
@@ -2579,10 +3330,43 @@ export function renderFrame(pose: PoseSpec): HTMLCanvasElement {
     frameCache.set(key, cached);
     return cached;
   }
-  const canvas = drawCat(pose);
+  const canvas = drawCat(pose, size);
   frameCache.set(key, canvas);
   trimCache(CACHE_LIMIT);
   return canvas;
+}
+
+/**
+ * One frame drawn with a given costume painter, WITHOUT touching the live
+ * painter or the frame cache - for previewing a costume the cat is not
+ * wearing (Settings → Featured Looks). Synchronous, so the running cat can
+ * never observe the swap.
+ */
+export function renderFrameWith(pose: PoseSpec, painter: CostumePainter | null, size = ART): HTMLCanvasElement {
+  const live = costumePainter;
+  costumePainter = painter;
+  try {
+    return drawCat(pose, Math.max(16, Math.round(size)));
+  } finally {
+    costumePainter = live;
+  }
+}
+
+/**
+ * A frame for a preview surface (Settings, posters, the chat header), painted
+ * with the live costume but kept OUT of the live cat's cache: preview frames
+ * are big, and the live cat's eye-tracking and tail phases churn that cache
+ * so fast that they were evicted within a minute and repainted on every open,
+ * pushing the live cat's own frames out on the way. Callers cache by
+ * `previewKey` (CatPreview's shared preview cache).
+ */
+export function renderFramePreview(pose: PoseSpec, size = ART): HTMLCanvasElement {
+  return drawCat(pose, Math.max(16, Math.round(size)));
+}
+
+/** When two `renderFramePreview` calls would paint the same picture. */
+export function previewKey(pose: PoseSpec, size: number): string {
+  return `${keyFor(pose, Math.max(16, Math.round(size)))}|${appearanceEpoch}`;
 }
 
 /** The cap itself, so the regression test asserts the real bound not a copy. */

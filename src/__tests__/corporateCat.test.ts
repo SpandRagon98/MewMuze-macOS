@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 // @ts-expect-error no @types/node in the app tsconfig; the typography and
 // costume-settings guards read their sources exactly this way.
 import { readFileSync } from "node:fs";
-import { CORPORATE_CAT_ID } from "../costumes/corporateCat";
+import { CORPORATE_CAT_ID, DEFAULT_CORPORATE_COLOUR, corporatePainter } from "../costumes/corporateCat";
+import { DEFAULT_POSE } from "../animation/spriteLoader";
 
 const overlay: string = readFileSync("src/costumes/costumeOverlay.ts", "utf8");
 const costume: string = readFileSync("src/costumes/corporateCat.ts", "utf8");
@@ -21,7 +22,7 @@ describe("Corporate Cat", () => {
     // Painting over a finished sprite put the jacket above the forelegs, the
     // keyboard and the laptop. It is now painted INSIDE the sprite instead.
     expect(overlay).toContain("setCostumePainter");
-    expect(overlay).toContain("paintCorporateCat");
+    expect(overlay).toContain("corporatePainter");
   });
 
   it("does not also composite itself on top", () => {
@@ -29,8 +30,23 @@ describe("Corporate Cat", () => {
     // draw the jacket again over the very props the first pass stayed behind.
     // Both facts come off one table now, so registering a painter and skipping
     // the composite cannot drift apart.
-    expect(overlay).toMatch(/\[CORPORATE_CAT_ID\]: \(\) => \(\{ painter: paintCorporateCat/);
+    expect(overlay).toMatch(/\[CORPORATE_CAT_ID\]: \(tint\) =>/);
+    // The suit colour goes in the sprite cache key, or a cached frame comes back
+    // in the previous colour after the customer picks a new one.
+    expect(overlay).toMatch(/key: `\$\{CORPORATE_CAT_ID\}:\$\{colour\}`/);
     expect(overlay).toMatch(/if \(PROCEDURAL\[activeCostumeId\]\) return base;/);
+  });
+
+  it("paints nothing on the face seam, which runs after the paws and props", () => {
+    // It used to answer every layer but "limbs" with the whole jacket, so the
+    // late "face" pass buried raised arms, the book, keyboard, laptop and calculator.
+    const calls: string[] = [];
+    const ctx = new Proxy({}, { get: (_t, k) => (typeof k === "string" && k !== "then" ? (...a: unknown[]) => void calls.push(`${k}:${a.length}`) : undefined), set: () => true }) as never;
+    const paint = corporatePainter(DEFAULT_CORPORATE_COLOUR);
+    paint(ctx, { ...DEFAULT_POSE, view: "front", body: "sit" }, "face");
+    expect(calls).toEqual([]);
+    paint(ctx, { ...DEFAULT_POSE, view: "front", body: "sit" }, "torso");
+    expect(calls.length).toBeGreaterThan(10);
   });
 
   it("draws from the live pose rather than a fixed bitmap", () => {

@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { formatTimer, type PomodoroSnapshot } from "../productivity/pomodoro";
 import { sessionView, BREAK_MINUTES, type Session } from "../productivity/session";
+import { Icon, type IconName } from "./icons";
 
 /**
- * Lightweight pixel-styled overlay widgets: the right-click context menu, the
- * reminder/message bubble, the pinned note, the Pomodoro chip and the scroll
- * paper strip. All positions arrive in CSS pixels (App converts from the
- * overlay's physical coordinate space).
+ * Overlay widgets around the cat: the right-click menu, notices, the pinned
+ * note, the focus/break chips and the scroll paper strip. All positions
+ * arrive in CSS pixels (App converts from the overlay's physical space).
  */
 
 // ---- context menu --------------------------------------------------------
@@ -20,6 +20,10 @@ export type MenuCommand =
   | "pause"
   | "resume"
   | "pet"
+  | "butterfly"
+  | "gesture-hi"
+  | "gesture-high-five"
+  | "tease"
   | "call"
   | "sleep"
   | "toggle-chase"
@@ -41,15 +45,51 @@ export type MenuCommand =
   | "tasks"
   | "calc-time"
   | "photo-mode"
+  | "my-day"
+  | "chat"
+  | "recorder"
   | "explain"
   | "settings"
+  | "settings:looks"
   | "quit";
 
+type PaneId = "root" | "focus" | "reminders" | "tools" | "play" | "look";
+
+interface MenuItem {
+  label: string;
+  icon: IconName;
+  cmd?: MenuCommand;
+  /** Opens a submenu instead of running a command. */
+  sub?: PaneId;
+  /** A toggle or choice that is currently on: shows a check. */
+  on?: boolean;
+  danger?: boolean;
+  /** Present but not built yet: inert, with a "Soon" tag. */
+  soon?: boolean;
+}
+
+const PANE_TITLE: Record<Exclude<PaneId, "root">, string> = {
+  focus: "Focus",
+  reminders: "Reminders",
+  tools: "Quick Tools",
+  play: "Play",
+  look: "Appearance",
+};
+
+/**
+ * The right-click menu: a compact control centre. The root holds the few
+ * things people reach for; everything else lives one level down, in a pane
+ * that slides in over the root (Left or Esc goes back). Full keyboard
+ * control: arrows, Home/End, Enter/Space, Right to open, Left/Esc to leave.
+ */
 export function CatContextMenu({
   state,
   workMode,
   session,
   clipboardEnabled,
+  voiceAvailable = false,
+  catSize,
+  activityLevel,
   onCommand,
   onClose,
 }: {
@@ -59,66 +99,233 @@ export function CatContextMenu({
   /** Active focus/break session, so those items offer to end it. */
   session: Session | null;
   clipboardEnabled: boolean;
+  /** Paper: Local Chat installed. Chat is offered either way - without the
+   *  module it opens Settings → Chat, where it can be added. */
+  chatAvailable?: boolean;
+  /** Paper: Local Voice installed - the recorder appears only then. */
+  voiceAvailable?: boolean;
+  catSize?: string;
+  activityLevel?: string;
   onCommand: (cmd: MenuCommand) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: state.x, y: state.y });
-
-  useEffect(() => {
-    // Keep the menu on-screen.
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPos({
-      x: Math.min(state.x, window.innerWidth - r.width - 8),
-      y: Math.min(state.y, window.innerHeight - r.height - 8),
-    });
-  }, [state]);
-
-  const item = (
-    label: string,
-    cmd: MenuCommand,
-    opts?: { check?: boolean; danger?: boolean; soon?: boolean },
-  ) => (
-    <div
-      className={`cat-menu-item${opts?.danger ? " danger" : ""}${opts?.soon ? " soon" : ""}`}
-      onClick={() => {
-        if (opts?.soon) return; // "coming soon" items are inert
-        onCommand(cmd);
-        onClose();
-      }}
-    >
-      <span>{label}</span>
-      {opts?.soon && <span className="cat-menu-soon">Coming soon</span>}
-      {opts?.check !== undefined && <span className="cat-menu-check">{opts.check ? "✓" : ""}</span>}
-    </div>
-  );
+  const [pane, setPane] = useState<PaneId>("root");
+  const [entered, setEntered] = useState<"sub" | "root" | null>(null);
+  const [active, setActive] = useState(0);
+  const [height, setHeight] = useState<number | null>(null);
 
   const focusOn = session?.kind === "focus";
   const breakOn = session?.kind === "break";
 
-  // A clean launcher: modes up top, productivity tools, then app controls.
+  const panes: Record<PaneId, MenuItem[][]> = {
+    root: [
+      [
+        // Without Local Chat this opens Settings → Chat, where it can be added.
+        { label: "Chat with MewMuze", icon: "chat", cmd: "chat" },
+        { label: "My Day", icon: "sun", cmd: "my-day" },
+      ],
+      [
+        { label: "Focus", icon: "target", sub: "focus", on: focusOn || breakOn },
+        { label: "Reminders", icon: "clock", sub: "reminders" },
+      ],
+      [
+        { label: workMode ? "Leave Work Mode" : "Work Mode", icon: "bolt", cmd: "work-mode", on: workMode },
+        { label: "Quick Tools", icon: "grid", sub: "tools" },
+      ],
+      [
+        { label: "Play", icon: "play", sub: "play" },
+        { label: "Photo Mode", icon: "camera", cmd: "photo-mode" },
+      ],
+      [{ label: "Appearance", icon: "palette", sub: "look" }],
+      [
+        { label: "Settings", icon: "gear", cmd: "settings" },
+        { label: "Quit MewMuze", icon: "power", cmd: "quit", danger: true },
+      ],
+    ],
+    focus: [
+      [
+        { label: focusOn ? "Stop focus" : "Start focusing", icon: "target", cmd: "focus-mode", on: focusOn },
+        { label: breakOn ? "End break" : "Take a break…", icon: "moon", cmd: "break", on: breakOn },
+        { label: "Pomodoro timer", icon: "clock", cmd: "pomodoro-toggle" },
+      ],
+    ],
+    reminders: [
+      [
+        { label: "Set a reminder…", icon: "bell", cmd: "set-reminder" },
+        { label: "Add a note…", icon: "note", cmd: "add-note" },
+      ],
+    ],
+    tools: [
+      [
+        { label: "Calculator & time", icon: "calc", cmd: "calc-time" },
+        ...(clipboardEnabled ? [{ label: "Clipboard Assistant", icon: "clipboard" as const, cmd: "clipboard-assistant" as const }] : []),
+        ...(voiceAvailable ? [{ label: "Voice recorder", icon: "mic" as const, cmd: "recorder" as const }] : []),
+        { label: "Tasks", icon: "check", cmd: "tasks" },
+      ],
+    ],
+    play: [
+      [
+        { label: "Pet MewMuze", icon: "heart", cmd: "pet" },
+        { label: "Take a nap", icon: "moon", cmd: "sleep" },
+      ],
+      [
+        { label: "Say hi", icon: "wave", cmd: "gesture-hi" },
+        { label: "High five", icon: "paw", cmd: "gesture-high-five" },
+        { label: "Tease MewMuze", icon: "bolt", cmd: "tease" },
+      ],
+      [{ label: "Send a butterfly", icon: "sparkle", cmd: "butterfly" }],
+    ],
+    look: [
+      [
+        { label: "Small", icon: "cat", cmd: "size-small", on: catSize === "small" },
+        { label: "Medium", icon: "cat", cmd: "size-medium", on: catSize === "medium" },
+        { label: "Large", icon: "cat", cmd: "size-large", on: catSize === "large" },
+      ],
+      [
+        { label: "Calm", icon: "moon", cmd: "activity-calm", on: activityLevel === "calm" },
+        { label: "Balanced", icon: "paw", cmd: "activity-balanced", on: activityLevel === "balanced" },
+        { label: "Playful", icon: "sparkle", cmd: "activity-playful", on: activityLevel === "playful" },
+      ],
+      [{ label: "Cat & Looks…", icon: "palette", cmd: "settings:looks" }],
+    ],
+  };
+  const groups = panes[pane];
+  const flat = groups.flat();
+
+  // Keep the menu on-screen: measured once on open. offsetWidth/Height, not
+  // getBoundingClientRect: the open animation has the menu scaled down, and
+  // the scaled box let the real menu hang 2 px off the edge of the screen.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setPos({
+      x: Math.max(8, Math.min(state.x, window.innerWidth - el.offsetWidth - 8)),
+      y: Math.max(8, Math.min(state.y, window.innerHeight - el.offsetHeight - 8)),
+    });
+    ref.current?.focus();
+  }, [state]);
+
+  // The viewport follows the current pane's height, so a submenu slides in
+  // without the frame jumping. Measured before paint.
+  useLayoutEffect(() => {
+    const h = paneRef.current?.offsetHeight ?? 0;
+    if (h) setHeight(h);
+  }, [pane, flat.length]);
+
+  const openPane = (next: PaneId) => {
+    setEntered(next === "root" ? "root" : "sub");
+    setPane(next);
+    setActive(0);
+  };
+  const run = (item: MenuItem) => {
+    if (item.soon) return;
+    if (item.sub) return openPane(item.sub);
+    if (item.cmd) {
+      onCommand(item.cmd);
+      onClose();
+    }
+  };
+
+  const onKeyDown = (e: KeyboardEvent | ReactKeyboardEvent) => {
+    const n = flat.length;
+    if (e.key === "ArrowDown") setActive((i) => (i + 1) % n);
+    else if (e.key === "ArrowUp") setActive((i) => (i - 1 + n) % n);
+    else if (e.key === "Home") setActive(0);
+    else if (e.key === "End") setActive(n - 1);
+    else if (e.key === "Enter" || e.key === " ") run(flat[active]);
+    else if (e.key === "ArrowRight" && flat[active]?.sub) openPane(flat[active].sub!);
+    else if ((e.key === "ArrowLeft" || e.key === "Backspace") && pane !== "root") openPane("root");
+    else if (e.key === "Escape") {
+      if (pane !== "root") openPane("root");
+      else onClose();
+    } else return;
+    e.preventDefault();
+  };
+  // Escape and arrows also work when focus sits outside the menu (it opens
+  // on a right-click in a click-through window, which may not take focus).
+  const keyRef = useRef(onKeyDown);
+  keyRef.current = onKeyDown;
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if (!ref.current?.contains(document.activeElement)) keyRef.current(e);
+    };
+    document.addEventListener("keydown", k);
+    return () => document.removeEventListener("keydown", k);
+  }, []);
+
+  let index = -1;
   return (
-    <div ref={ref} className="cat-menu" style={{ left: pos.x, top: pos.y }}>
-      {item(workMode ? "Exit work mode" : "⚡ Work mode", "work-mode", { check: workMode })}
-      {item(focusOn ? "Stop focus mode" : "🎯 Focus mode", "focus-mode", { check: focusOn })}
-      {item(breakOn ? "End break" : "☕ Break…", "break", { check: breakOn })}
-      <div className="cat-menu-sep" />
-      {item("⏰ Set Reminder…", "set-reminder")}
-      {item("📝 Add note…", "add-note")}
-      {clipboardEnabled && item("▤ Clipboard Assistant", "clipboard-assistant")}
-      {item("✓ Tasks", "tasks", { soon: true })}
-      {item("🧮 Calc & Time", "calc-time")}
-      {item("📷 Photo Mode", "photo-mode")}
-      <div className="cat-menu-sep" />
-      {item("Settings…", "settings")}
-      {item("Close app", "quit", { danger: true })}
+    <div
+      ref={ref}
+      className="mm-menu cat-menu"
+      role="menu"
+      aria-label={pane === "root" ? "MewMuze" : PANE_TITLE[pane]}
+      tabIndex={-1}
+      style={{ left: pos.x, top: pos.y }}
+      onKeyDown={onKeyDown}
+    >
+      <div className="mm-menu-viewport" style={height ? { height } : undefined}>
+        <div ref={paneRef} key={pane} className={`mm-menu-pane${entered ? ` enter-${entered}` : ""}`}>
+          {pane !== "root" && (
+            <div className="mm-menu-head">
+              <button className="mm-icon-btn" aria-label="Back" onClick={() => openPane("root")}>
+                <Icon name="chevronLeft" size={16} />
+              </button>
+              {PANE_TITLE[pane]}
+            </div>
+          )}
+          {groups.map((group, g) => (
+            <div key={g} role="group">
+              {g > 0 && <div className="mm-menu-sep" role="separator" />}
+              {group.map((item) => {
+                const i = ++index;
+                return (
+                  <button
+                    key={item.label}
+                    role="menuitem"
+                    tabIndex={-1}
+                    data-submenu={item.sub ? "" : undefined}
+                    aria-haspopup={item.sub ? "menu" : undefined}
+                    aria-disabled={item.soon || undefined}
+                    className={`mm-menu-item cat-menu-item${i === active ? " active" : ""}${item.on ? " on" : ""}${item.danger ? " danger" : ""}${item.soon ? " soon" : ""}`}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => run(item)}
+                  >
+                    <span className="mm-menu-icon">
+                      <Icon name={item.icon} size={17} />
+                    </span>
+                    <span className="mm-menu-label">{item.label}</span>
+                    {item.soon ? (
+                      <span className="mm-menu-soon cat-menu-soon">Soon</span>
+                    ) : item.sub ? (
+                      <span className="mm-menu-hint">
+                        <Icon name="chevronRight" size={14} />
+                      </span>
+                    ) : item.on ? (
+                      <span className="mm-menu-hint">
+                        <Icon name="check" size={15} />
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ---- retro notice --------------------------------------------------------
+// ---- notices ---------------------------------------------------------------
+/** Notice type size, and the smallest it may step down to so a long line
+ *  still fits the monitor - never below 11 px. */
+const NOTICE_FONT = 13;
+const NOTICE_FONT_MIN = 11;
+
 export interface BubbleState {
   id: string;
   message: string;
@@ -128,15 +335,18 @@ export interface BubbleState {
   variant?: "plain" | "warn" | "due";
   /** Offer a "Done" action too (scheduled reminders). */
   completable?: boolean;
+  /** Paper companion card: lines under the headline, one per row. */
+  lines?: string[];
+  /** Paper companion card: extra buttons (Open Meeting, Open Calendar...). */
+  actions?: { id: string; label: string; href?: string }[];
 }
 
 /**
- * The universal notification: a small white rectangle with a thin black
- * outline and black pixel-style text — retro game dialogue, not a modern
- * toast. It ALWAYS sits above the cat's head with a small consistent gap,
- * never in front of the cat, and is kept inside the monitor by sliding left
- * or right (and, when a message is genuinely wider than the screen, by
- * stepping the font down). The text never wraps: one line, always.
+ * The universal notification: the cat speaking. It ALWAYS sits above the
+ * cat's head with a small consistent gap, never in front of it, and is kept
+ * inside the monitor by sliding left or right (and, when a message is
+ * genuinely wider than the screen, by stepping the font down to 11 px). One
+ * line, always.
  */
 export function RetroNotice({
   bubble,
@@ -147,6 +357,7 @@ export function RetroNotice({
   onDismiss,
   onSnooze,
   onComplete,
+  onAction,
 }: {
   bubble: BubbleState;
   /** Cat centre x and top y, CSS px. */
@@ -158,8 +369,10 @@ export function RetroNotice({
   onDismiss: () => void;
   onSnooze: () => void;
   onComplete?: () => void;
+  onAction?: (action: { id: string; label: string; href?: string }) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const card = Boolean(bubble.lines?.length);
   // Small constant space between the label block and the cat's head: close
   // enough to read as "the cat is saying this", never touching the sprite.
   const GAP = 5;
@@ -172,10 +385,10 @@ export function RetroNotice({
     // Measure, shrink the font until the single line fits the monitor, then
     // centre on the cat and slide sideways only as far as needed to stay in.
     const avail = Math.max(80, areaRight - areaLeft - MARGIN * 2);
-    let font = 11;
+    let font = NOTICE_FONT;
     el.style.fontSize = `${font}px`;
     let r = el.getBoundingClientRect();
-    while (r.width > avail && font > 8) {
+    while (r.width > avail && font > NOTICE_FONT_MIN) {
       font -= 1;
       el.style.fontSize = `${font}px`;
       r = el.getBoundingClientRect();
@@ -183,7 +396,7 @@ export function RetroNotice({
     const x = Math.min(Math.max(catCx - r.width / 2, areaLeft + MARGIN), areaRight - MARGIN - r.width);
     const y = Math.max(MARGIN, catTop - GAP - r.height);
     setLayout({ x, y, font });
-  }, [bubble.message, bubble.snoozable, bubble.completable, catCx, catTop, areaLeft, areaRight]);
+  }, [bubble.message, bubble.lines, bubble.snoozable, bubble.completable, catCx, catTop, areaLeft, areaRight]);
 
   return (
     <div
@@ -191,15 +404,32 @@ export function RetroNotice({
       // `notice-single` marks the one notice anchored directly to the cat, so
       // the mail stack can measure it and start above it instead of on top of
       // it. Purely a layout hook — it carries no styling of its own.
-      className={`retro-notice notice-single ${bubble.variant ?? "plain"}`}
+      className={`retro-notice notice-single ${bubble.variant ?? "plain"}${card ? " notice-card" : ""}`}
       style={
         layout
           ? { left: layout.x, top: layout.y, fontSize: layout.font }
           : { left: -9999, top: -9999 }
       }
     >
-      <span className="retro-msg">{bubble.message}</span>
+      {card ? (
+        <>
+          <span className="retro-msg retro-line heading">{bubble.message}</span>
+          {bubble.lines!.map((line, i) => (
+            <span key={i} className={`retro-msg retro-line${line.endsWith(":") ? " heading" : ""}`}>
+              {line}
+            </span>
+          ))}
+        </>
+      ) : (
+        <span className="retro-msg">{bubble.message}</span>
+      )}
       <span className="retro-actions">
+        {onAction &&
+          bubble.actions?.map((a) => (
+            <button key={a.id} className={`retro-btn${a.href ? " open" : ""}`} onClick={() => onAction(a)}>
+              {a.label}
+            </button>
+          ))}
         {bubble.completable && onComplete && (
           <button className="retro-btn done" onClick={onComplete}>
             Done
@@ -335,14 +565,14 @@ export function MailStack({
       return;
     }
 
-    // Step the type down until the widest card fits the monitor, exactly the
-    // 11px→8px ladder the single notice uses. Cards never wrap, so a long
+    // Step the type down until the widest card fits the monitor, the same
+    // ladder the single notice uses. Cards never wrap, so a long
     // subject would otherwise push the whole stack past the screen edge.
     const avail = Math.max(80, areaRight - areaLeft - MARGIN * 2);
-    let font = 11;
+    let font = NOTICE_FONT;
     el.style.fontSize = `${font}px`;
     let r = el.getBoundingClientRect();
-    while (r.width > avail && font > 8) {
+    while (r.width > avail && font > NOTICE_FONT_MIN) {
       font -= 1;
       el.style.fontSize = `${font}px`;
       r = el.getBoundingClientRect();
@@ -368,7 +598,8 @@ export function MailStack({
       {shown.map((item, i) => (
         <div key={item.uid} className="retro-notice mail-card">
           <span className="retro-msg">
-            📧 {item.line}
+            <Icon name="mail" size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />
+            {item.line}
             {/* The overflow count rides on the topmost card so it needs no
                 measuring pass of its own. */}
             {i === shown.length - 1 && hidden > 0 && <span className="mail-more">+{hidden} more</span>}
@@ -389,12 +620,11 @@ export function MailStack({
 
 // ---- focus / break session timer ----------------------------------------
 /**
- * The Focus-mode / Break timer chip. Same retro-dialogue shape as RetroNotice
- * (rectangle, thin outline, pixel font) but colour-coded: a calm green for
- * focus with white text, and a green→amber→red ramp for a break, with a
- * progress bar filling along the bottom edge as the break runs down. It sits
- * above the cat's head and self-ticks every 250 ms so the countdown stays live
- * without re-rendering the whole app each frame.
+ * The Focus-mode / Break timer chip. The session colour (teal for focus, a
+ * green→amber-yellow→red ramp for a break) marks its dot and the progress
+ * edge that fills as a break runs down. It sits above the cat's head and
+ * self-ticks every 250 ms so the countdown stays live without re-rendering
+ * the whole app each frame.
  */
 export function SessionTimer({
   session,
@@ -442,14 +672,13 @@ export function SessionTimer({
       className={`session-timer${view.kind === "break" ? " has-bar" : ""}${view.overrun ? " overrun" : ""}`}
       style={{
         ...(layout ? { left: layout.x, top: layout.y } : { left: -9999, top: -9999 }),
-        background: view.color,
-        color: view.text,
+        ["--mm-session" as string]: view.color,
       }}
     >
       <span className="session-label">{title}</span>
       <span className="session-time">{view.label}</span>
       <button className="session-end" onClick={onEnd} title="End">
-        ✕
+        <Icon name="close" size={12} />
       </button>
       {view.kind === "break" && (
         <span className="session-bar" style={{ width: `${Math.round(view.fraction * 100)}%` }} />
@@ -480,6 +709,15 @@ export function BreakPicker({
   const MARGIN = 6;
   const [layout, setLayout] = useState<{ x: number; y: number } | null>(null);
 
+  // Escape cancels, like every other surface by the cat.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -502,7 +740,7 @@ export function BreakPicker({
         </button>
       ))}
       <button className="break-pill cancel" onClick={onClose} title="Cancel">
-        ✕
+        <Icon name="close" size={12} />
       </button>
     </div>
   );
@@ -554,14 +792,26 @@ export function CatNote({
 }
 
 // ---- pomodoro chip -------------------------------------------------------
+/** Pomodoro phase dots, from the design system: raspberry, green, teal, grey. */
 const PHASE_COLORS: Record<string, string> = {
-  focus: "#e06e59",
-  shortBreak: "#5fae62",
-  longBreak: "#5a8fd6",
-  paused: "#b8a34e",
+  focus: "#c73866",
+  shortBreak: "#4cc38a",
+  longBreak: "#5fd3e3",
+  paused: "#767c8d",
 };
 
-export function PomodoroChip({ snapshot, x, y }: { snapshot: PomodoroSnapshot; x: number; y: number }) {
+export function PomodoroChip({
+  snapshot,
+  x,
+  y,
+  onClose,
+}: {
+  snapshot: PomodoroSnapshot;
+  x: number;
+  y: number;
+  /** Stop the timer and put the chip away. */
+  onClose: () => void;
+}) {
   if (snapshot.phase === "idle") return null;
   const label =
     snapshot.phase === "focus"
@@ -572,10 +822,13 @@ export function PomodoroChip({ snapshot, x, y }: { snapshot: PomodoroSnapshot; x
           ? "Long break"
           : "Paused";
   return (
-    <div className="pomo-chip pixel-ui" style={{ left: x, top: y }}>
-      <span className="phase-dot" style={{ background: PHASE_COLORS[snapshot.phase] ?? "#888" }} />
+    <div className="pomo-chip pixel-ui" style={{ left: x, top: y }} onPointerDown={(e) => e.stopPropagation()}>
+      <span className="phase-dot" style={{ background: PHASE_COLORS[snapshot.phase] ?? "#767c8d" }} />
       <span>{label}</span>
       <span>{formatTimer(snapshot.remaining)}</span>
+      <button className="pomo-x" onClick={onClose} title="Stop the timer" aria-label="Stop the timer">
+        <Icon name="close" size={11} />
+      </button>
     </div>
   );
 }

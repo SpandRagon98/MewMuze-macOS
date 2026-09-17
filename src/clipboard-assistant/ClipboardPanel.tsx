@@ -43,6 +43,8 @@ import type {
   ClipboardSnapshot,
   ClipboardTransformId,
 } from "./clipboardTypes";
+import { Icon } from "../components/icons";
+import { confirmAction } from "../components/ConfirmDialog";
 
 export const CLIPBOARD_PANEL_SIZE = { width: 420, height: 620 };
 export const CLIPBOARD_PANEL_MARGIN = 14;
@@ -311,7 +313,7 @@ export function ClipboardPanel({
   }, [onCopy, onReaction]);
 
   const clear = async () => {
-    if (!window.confirm("Clear the current clipboard?")) return;
+    if (!(await confirmAction({ title: "Clear the clipboard?", message: "What you copied is removed from the clipboard.", confirmLabel: "Clear", danger: true }))) return;
     try {
       await onClear();
       onReaction("success");
@@ -364,8 +366,8 @@ export function ClipboardPanel({
       }}
     >
       <div className="clipboard-head">
-        <span className="clipboard-title"><i aria-hidden="true">▤</i> Clipboard Assistant</span>
-        <button className="clipboard-x" type="button" onClick={onClose} title="Close" aria-label="Close">✕</button>
+        <span className="clipboard-title"><Icon name="clipboard" size={18} /> Clipboard Assistant</span>
+        <button className="clipboard-x" type="button" onClick={onClose} title="Close" aria-label="Close"><Icon name="close" size={16} /></button>
       </div>
 
       <div className="clipboard-shell">
@@ -444,9 +446,9 @@ export function ClipboardPanel({
                 <button
                   className="pixel-btn"
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     const link = links[selectedLink] ?? links[0];
-                    if (window.confirm(`Open this link?\n\n${link}`)) {
+                    if (await confirmAction({ title: "Open this link?", message: link, confirmLabel: "Open" })) {
                       void onOpenLink(link).catch(() => {
                         setError("MewMuze couldn’t open this link.");
                         onReaction("error");

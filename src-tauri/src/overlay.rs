@@ -371,6 +371,30 @@ fn position_window(win: &WebviewWindow) {
     }
 }
 
+/// Put the overlay back in the topmost band if something demoted it.
+///
+/// Windows lets any process (and some shell transitions) clear WS_EX_TOPMOST,
+/// and nothing restores it - the cat then sits behind the next app opened.
+/// Called from the 2 s full-screen poll: one GetWindowLongW when all is well,
+/// and no re-ordering above other always-on-top windows.
+#[cfg(windows)]
+pub fn keep_topmost(win: &WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, WS_EX_TOPMOST,
+    };
+    let Ok(raw) = win.hwnd() else {
+        return;
+    };
+    let hwnd = HWND(raw.0);
+    unsafe {
+        if GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 == 0 {
+            let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+}
+
 /// Put the overlay one level above the Dock.
 ///
 /// Tauri's `set_always_on_top` maps to `NSFloatingWindowLevel` (3), which is

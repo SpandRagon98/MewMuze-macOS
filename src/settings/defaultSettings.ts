@@ -2,6 +2,7 @@ import type { ActivityLevel, CatSize } from "../types/cat";
 import type { CatAppearance } from "../animation/spriteLoader";
 import type { ClipboardAssistantSettings } from "../clipboard-assistant/clipboardTypes";
 import { MAIL_STACK_DEFAULT } from "../integrations/mailStack";
+import { DEFAULT_COMPANION, type CompanionSettings } from "../companion/profile";
 
 /**
  * Persisted, user-facing settings. Everything is local-only: no cursor history,
@@ -95,6 +96,14 @@ export interface Settings {
   /** Seconds without mouse or keyboard input before the cat yawns and dozes off. */
   drowsyAfterSec: number;
 
+  // Emotion (Paper)
+  /** How big MewMuze's feelings look: head, eye and gesture range. */
+  expressionIntensity: "subtle" | "balanced" | "dramatic";
+  /** One rude paw gesture in savage/rage moments you started. Off by default. */
+  edgyGestures: boolean;
+  /** A butterfly now and then for MewMuze to watch. */
+  butterflyVisits: boolean;
+
   // Productivity
   userName: string;
   note: { text: string; visible: boolean };
@@ -135,8 +144,8 @@ export interface Settings {
   costumeCatalogMigrationVersion: number;
   /** Cleared after the friendly migration message is shown once. */
   costumeMigrationNoticePending: boolean;
-  /** Panel/menu theme: dark (default) or light (white with warm orange). */
-  uiTheme: "dark" | "light";
+  /** Settings, menus and panels: dark (default) or light. */
+  theme: "dark" | "light";
   /**
    * Remembered Photo Mode save folder. Empty (the default, and what every
    * existing settings.json will sanitise to) means ask with the save dialog.
@@ -156,6 +165,9 @@ export interface Settings {
   firstRunUnix: number;
   /** Check for updates on launch (paid users expect silent fixes). */
   autoUpdate: boolean;
+
+  /** Paper build: the Personal Companion (profile, features, power mode, privacy). */
+  companion: CompanionSettings;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -178,6 +190,10 @@ export const DEFAULT_SETTINGS: Settings = {
   peekAuto: true,
   peekManual: false,
   drowsyAfterSec: 20,
+
+  expressionIntensity: "balanced",
+  edgyGestures: false,
+  butterflyVisits: true,
 
   userName: "",
   note: { text: "", visible: false },
@@ -219,7 +235,7 @@ export const DEFAULT_SETTINGS: Settings = {
   seasonalCostumes: false,
   costumeCatalogMigrationVersion: 1,
   costumeMigrationNoticePending: false,
-  uiTheme: "dark",
+  theme: "dark",
 
   photoFolder: "",
   agentStatusFile: "",
@@ -227,6 +243,8 @@ export const DEFAULT_SETTINGS: Settings = {
   licenseKey: "",
   firstRunUnix: 0,
   autoUpdate: true,
+
+  companion: DEFAULT_COMPANION,
 };
 
 /** Logical sprite size (px) for each cat-size option, before DPI scaling. */

@@ -83,6 +83,12 @@ describe("Cyberpunk Cat", () => {
     expect(costume).toMatch(/if \(pose\.view === "back"\) return;/);
   });
 
+  it("shows the chosen accessory in the preview, not a context swap", () => {
+    // The app swaps in glasses while an IDE is focused. With Settings open that
+    // made the preview contradict the dropdown right next to it.
+    expect(app).toMatch(/const wantedAccessory = panelOpenRef\.current\s*\?\s*baseAccessory/);
+  });
+
   it("has the id the package declares", () => {
     expect(CYBERPUNK_CAT_ID).toBe("mewmuze.cyberpunk-cat.v1");
   });

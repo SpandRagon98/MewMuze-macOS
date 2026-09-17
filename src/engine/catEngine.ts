@@ -4,6 +4,7 @@ import { AnimationController } from "../animation/animationController";
 import {
   DEFAULT_POSE,
   TAIL_PHASE_STEPS,
+  type CostumeTraits,
   type EyeState,
   type MouthState,
   type PoseSpec,
@@ -25,6 +26,10 @@ import {
   type Bounds,
 } from "../physics/collision";
 import type { Rect } from "../types/cat";
+import { CatEmotionEngine, type EmotionRequest, type EmotionSource, type EmotionState } from "../emotion/emotionEngine";
+import { ExpressionController, NO_OVERLAY, applyOverlay, feelPose, type ExpressionSettings, type Overlay } from "../emotion/expression";
+import { CatGestureController, type GestureId } from "../emotion/gestures";
+import type { EmotionId } from "../emotion/emotions";
 
 /** Animations that mean "the cat is airborne on purpose"; skip the fall override. */
 const AIRBORNE_ANIMS = new Set<AnimationName>([
@@ -202,6 +207,26 @@ export class CatEngine {
 
   /** Persistent grounded loop (kneading, thinking, scroll-watching…). */
   private loopOverride: AnimationName | null = null;
+
+  // ---- emotion (Paper) ---------------------------------------------------
+  /** What the cat feels. Everything that wants a feeling asks here (feel()). */
+  readonly emotion = new CatEmotionEngine();
+  private readonly expression = new ExpressionController(7);
+  private readonly gestures = new CatGestureController();
+  private overlay: Overlay = NO_OVERLAY;
+  /** Scratch for the emotional pose; getPose()'s object is the controller's, never written. */
+  private readonly emotionPose: PoseSpec = { ...DEFAULT_POSE };
+  /** Reused so a gesture on top of the overlay allocates nothing per frame. */
+  private readonly gestureOverlay: Overlay = { ...NO_OVERLAY, look: {} };
+  /** Something the cat is watching (the butterfly), in world px. */
+  private attention: Point | null = null;
+  private attentionSince = 0;
+  private emotionContext = { serious: false, edgyInvited: false };
+  /** Until when (engine clock) the user has provoked the cat themselves - grabbed it once too often. */
+  private provokedUntil = 0;
+  private photoEmotion: EmotionId | null = null;
+  /** Engine clock (s), for gestures. */
+  private clock = 0;
   /** Peek mode: tuck into a screen corner and stay unobtrusive. */
   private peek = false;
 
@@ -290,12 +315,21 @@ export class CatEngine {
    * user has been away a while. Optional so existing callers/tests keep working.
    */
   setUserIdle(idle: boolean, idleSeconds?: number): void {
+    const awayS = this.userIdleS;
     this.userIdle = idle;
     this.userIdleS = idleSeconds ?? (idle ? 999 : 0);
+    // Back after a real absence (a measured one, not the no-reading fallback): glad to see you.
+    if (idleSeconds !== undefined && this.measuredIdle && awayS >= 300 && idleSeconds < 2) {
+      if (this.feel({ emotion: "happy", intensity: 0.75, source: "event" })) this.gesture("wave");
+    }
+    this.measuredIdle = idleSeconds !== undefined;
   }
+  private measuredIdle = false;
   setPetting(active: boolean): void {
     if (active && !this.pettingActive) this.registerInteraction();
     this.pettingActive = active;
+    // Held while the strokes last; it fades softly once they stop.
+    if (active) this.feel({ emotion: "affectionate", intensity: 0.8, source: "interaction", duration: 2 });
   }
   setActivity(a: ActivityProfile): void {
     this.activity = a;
@@ -340,6 +374,115 @@ export class CatEngine {
   }
   /** Play a one-shot reaction if the current animation can be interrupted. */
   playOneShot(anim: AnimationName): void {
+    this.ctrl.requestPlay(anim);
+  }
+
+  // ---- emotion (Paper) ---------------------------------------------------
+  /**
+   * Ask the cat to feel something. A drag owns the cat: nothing new starts
+   * halfway through one (it would suddenly cry mid-air), except what the drag
+   * itself asks for.
+   */
+  feel(r: EmotionRequest): boolean {
+    if ((this.state.isDragging || this.cursorHeld) && r.source !== "drag") return false;
+    return this.emotion.request(r);
+  }
+  /** What the cat feels right now. */
+  feeling(): EmotionState {
+    return this.emotion.state;
+  }
+  /** Let go of a feeling `source` asked for (the chat closed, the butterfly left). */
+  releaseFeeling(source: EmotionSource): void {
+    this.emotion.release(source);
+  }
+  setExpressionSettings(s: ExpressionSettings): void {
+    this.expression.setSettings(s);
+  }
+  /** What the worn costume covers (costumes declare it; see CostumeTraits). */
+  setCostumeTraits(t: CostumeTraits): void {
+    this.expression.setCostumeTraits(t);
+  }
+  /** Serious conversation, or an explicit invitation to be edgy (see emotion/gestures.ts). */
+  setEmotionContext(c: { serious: boolean; edgyInvited: boolean }): void {
+    this.emotionContext = c;
+  }
+  private edgyInvited(): boolean {
+    return this.emotionContext.edgyInvited || this.clock < this.provokedUntil;
+  }
+  /** Hauled around once too often: a tantrum the user asked for. */
+  private tantrum(): void {
+    this.ctrl.play("angry", true);
+    this.provokedUntil = this.clock + 8;
+    this.emotion.request({ emotion: "rage", intensity: 0.9, source: "interaction", duration: 3 });
+  }
+  /**
+   * Play → Tease: the user asked for attitude, so this is the one explicit
+   * invitation. The rude paw still needs Edgy gestures on and nothing serious
+   * going on; otherwise the same moment ends in a dismissive wave.
+   */
+  tease(): void {
+    this.provokedUntil = this.clock + 4;
+    if (this.feel({ emotion: "savage", intensity: 0.85, source: "interaction", duration: 4 })) this.gesture("middle");
+  }
+  /** Play a paw gesture now (a finished focus session → victory). */
+  gesture(id: GestureId): void {
+    this.gestures.play(id, this.clock);
+  }
+  /**
+   * Watch something (the butterfly), in world px; null to stop. The cat
+   * freezes when it first notices, then the pupils track it and the head
+   * follows a beat later.
+   */
+  setAttention(p: Point | null): void {
+    if (p && !this.attention) this.attentionSince = this.clock;
+    this.attention = p;
+  }
+  /** How long the current thing has been watched, in seconds (0 if nothing). */
+  attentionSeconds(): number {
+    return this.attention ? this.clock - this.attentionSince : 0;
+  }
+  /** Photo Mode: hold this emotion at full strength on the photographed pose. */
+  setPhotoEmotion(id: EmotionId | null): void {
+    this.photoEmotion = id;
+  }
+  /** The current expression overlay (tests, the developer line). */
+  getOverlay(): Overlay {
+    return this.overlay;
+  }
+
+  /** Somewhere a feeling can be shown on the body: on its feet and not being handled. */
+  private canEmote(): boolean {
+    return (
+      this.state.isGrounded &&
+      !this.state.isDragging &&
+      !this.cursorHeld &&
+      !this.paused &&
+      (!this.attachment || this.attachment.mode === "standing")
+    );
+  }
+
+  private updateEmotion(dt: number): void {
+    this.clock += dt;
+    this.emotion.update(dt);
+    const can = this.canEmote();
+    this.overlay = this.expression.update(dt, this.emotion.state, {
+      canGesture: can,
+      serious: this.emotionContext.serious,
+      edgyInvited: this.edgyInvited(),
+      attention: null,
+    });
+    // Whole-body accents (a hop of excitement, a yawn) only where the body is free.
+    const anim = this.overlay.anim;
+    if (!anim || !can || this.loopOverride || this.override || this.pettingActive || this.photoPose || this.attention) return;
+    if (anim === "smallHop") {
+      // A real little hop of joy - a fifth of a full jump - landed by the
+      // ordinary airborne code, not a jump pose played on the spot.
+      this.attachment = null;
+      this.state.velocityY = this.cfg.jumpVelocity * 0.42;
+      this.state.isGrounded = false;
+      this.ctrl.play("smallHop", true);
+      return;
+    }
     this.ctrl.requestPlay(anim);
   }
   /** Entrance: drop in from the top of the current monitor and land. */
@@ -458,7 +601,7 @@ export class CatEngine {
       this.attachToPlatform(target.platform, "standing");
       if (this.angryPending) {
         this.angryPending = false;
-        this.ctrl.play("angry", true);
+        this.tantrum();
       } else {
         this.ctrl.play("placedDown", true);
       }
@@ -592,6 +735,7 @@ export class CatEngine {
 
     this.updateVitals(dt, now);
     this.updateStretchSpring(dt);
+    this.updateEmotion(dt);
     this.updatePupils(dt);
     this.updateTail(dt);
     this.cursorGrabCooldown = Math.max(0, this.cursorGrabCooldown - dt);
@@ -688,24 +832,41 @@ export class CatEngine {
   private updatePupils(dt: number): void {
     let tx = 0;
     let ty = 0;
-    if (this.eyeTracking && this.cursor) {
-      const headY = this.state.y - this.sizePx * 0.72;
-      const dx = this.cursor.x - this.state.x;
-      const dy = this.cursor.y - headY;
-      // Shorter reach = the gaze saturates sooner, so an ordinary cursor move
-      // sweeps the pupils across their whole range — visibly more dramatic.
-      const reach = 190 * this.world.scale;
-      tx = Math.max(-1, Math.min(1, dx / reach)) * 2;
-      ty = Math.max(-1, Math.min(1, dy / reach)) * 2;
+    let pupilRate = 9.5;
+    let headRate = 5.6;
+    const headY = this.state.y - this.sizePx * 0.72;
+    // Shorter reach = the gaze saturates sooner, so an ordinary move sweeps the
+    // pupils across their whole range — visibly more dramatic.
+    const aim = (x: number, y: number, reach: number) => {
+      tx = Math.max(-1, Math.min(1, (x - this.state.x) / reach)) * 2;
+      ty = Math.max(-1, Math.min(1, (y - headY) / reach)) * 2;
+    };
+    if (this.attention) {
+      // Layered attention: the pupils snap to what it is watching, the head
+      // turns a beat later - so a fast zig-zag leaves the eyes leading and the
+      // head making small, late corrections, never the neck whipping round.
+      aim(this.attention.x, this.attention.y, 150 * this.world.scale);
+      pupilRate = 15;
+      headRate = 3.4;
+    } else {
+      if (this.eyeTracking && this.cursor) aim(this.cursor.x, this.cursor.y, 190 * this.world.scale);
+      // A feeling has a resting gaze (downcast when sad, sideways when smug)
+      // that pulls the eyes away from the cursor as it strengthens.
+      const g = this.overlay.gaze;
+      if (g) {
+        const w = Math.min(1, this.overlay.intensity * 1.2);
+        tx += (g.x - tx) * w;
+        ty += (g.y - ty) * w;
+      }
     }
-    const ease = Math.min(1, dt * 9.5);
+    const ease = Math.min(1, dt * pupilRate);
     this.pupilX += (tx - this.pupilX) * ease;
     this.pupilY += (ty - this.pupilY) * ease;
     // Deliberately slower and shorter than the pupils, so the eyes still lead
     // and the head follows a beat later — but with noticeably more travel and
     // snap, so the cat visibly turns to watch you rather than only hinting at
     // it. With no cursor the target is 0, so the head drifts back to neutral.
-    const headEase = Math.min(1, dt * 5.6);
+    const headEase = Math.min(1, dt * headRate);
     this.headX += (tx * 0.92 - this.headX) * headEase;
     this.headY += (ty * 0.74 - this.headY) * headEase;
   }
@@ -723,6 +884,8 @@ export class CatEngine {
     else if (anim === "walk" || anim === "stalk" || anim === "danceBop") cyclesPerSecond = 0.5;
     else if (this.state.mood === "playful") cyclesPerSecond = 0.42;
     else cyclesPerSecond = 0.22; // sitting / idling: a slow, calm curl
+    // Feelings set the tempo: a lazy sweep when sad, a quick flick when excited or cross.
+    if (this.overlay.active) cyclesPerSecond *= this.overlay.tailSpeed;
     this.tailPhase = (this.tailPhase + dt * cyclesPerSecond * TAIL_PHASE_STEPS) % TAIL_PHASE_STEPS;
   }
 
@@ -902,12 +1065,14 @@ export class CatEngine {
     // landing flourish. Ears flat, teeth out, then it shakes it off.
     if (this.angryPending) {
       this.angryPending = false;
-      this.ctrl.play("angry", true);
+      this.tantrum();
       return;
     }
     // A clumsy hard landing sometimes leaves the cat sheepishly embarrassed.
     const hard = this.squash > 0.4;
-    this.ctrl.play(hard ? (this.random() < 0.45 ? "embarrassed" : "hardLand") : "softLand", true);
+    const sheepish = hard && this.random() < 0.45;
+    this.ctrl.play(hard ? (sheepish ? "embarrassed" : "hardLand") : "softLand", true);
+    if (sheepish) this.emotion.request({ emotion: "embarrassed", intensity: 0.7, source: "interaction", duration: 2.5 });
   }
 
   private tickGrounded(dt: number, now: number): void {
@@ -969,6 +1134,27 @@ export class CatEngine {
       return;
     }
 
+    // Watching something, or feeling something that wants stillness (sad,
+    // crying, savage, comforting): stay put, face the room, and let the face
+    // and paws do the acting. Wandering off mid-sob would read as not feeling it.
+    const ov = this.overlay;
+    // A paw gesture is made facing the room, so a walking cat pauses for it too.
+    if (this.attention || this.gestures.isPlaying(this.clock) || (ov.active && ov.movement === "still" && ov.intensity >= 0.35)) {
+      integrate(this.state, this.cfg, dt, 0);
+      this.state.velocityX = 0;
+      if (this.attention) this.state.facing = this.attention.x >= this.state.x ? "right" : "left";
+      this.ctrl.requestPlay(this.attention ? "watch" : "idle");
+      clampToBounds(this.state, this.world.bounds, half);
+      this.ctrl.update(dt);
+      return;
+    }
+
+    // After something heavy the cat stays quieter for a while (emotional memory):
+    // less play, more rest, then back to its usual self.
+    const calm = this.emotion.calmness();
+    const activity = calm > 0
+      ? { playfulness: this.activity.playfulness * (1 - calm), chaseEagerness: this.activity.chaseEagerness * (1 - calm), restfulness: this.activity.restfulness * (1 + calm) }
+      : this.activity;
     const out = this.brain.update({
       state: this.state,
       cfg: this.cfg,
@@ -978,7 +1164,7 @@ export class CatEngine {
       userIdleS: this.userIdleS,
       drowsyAfterS: this.drowsyAfterS,
       cursorChasing: this.cursorChasing,
-      activity: this.activity,
+      activity,
       support: this.support,
       platforms: this.world.platforms,
       bounds: this.world.bounds,
@@ -1046,7 +1232,9 @@ export class CatEngine {
       applyJump(this.state, this.cfg, out.jump.vx);
       this.ctrl.play(out.jump.anim, true);
     } else {
-      integrate(this.state, this.cfg, dt, out.targetVx);
+      // A low mood walks slower and smaller.
+      const slow = ov.active && ov.movement === "slow" ? 1 - 0.45 * ov.intensity : 1;
+      integrate(this.state, this.cfg, dt, out.targetVx === null ? null : out.targetVx * slow);
       this.ctrl.requestPlay(out.animation);
       if (this.support?.kind === "window" && this.state.x >= this.support.left && this.state.x <= this.support.right) {
         this.attachToPlatform(this.support, "standing");
@@ -1158,6 +1346,23 @@ export class CatEngine {
       if (this.photoExpression.mouth) this.photoPoseScratch.mouth = this.photoExpression.mouth;
       r.pose = this.photoPoseScratch;
     }
+    if (this.photoPose) {
+      // Photo Mode: the chosen emotion at full strength, held still for the shot.
+      // Same call as the panel's preview, so the photo and the desktop cat match.
+      if (this.photoEmotion) r.pose = feelPose(r.pose, this.photoEmotion, this.emotionPose);
+    } else if (this.canEmote()) {
+      const settings = this.expression.getSettings();
+      const g = this.gestures.pose(this.clock, { enabled: settings.edgy, invited: this.edgyInvited(), serious: this.emotionContext.serious });
+      let ov = this.overlay;
+      if (g) {
+        // A requested gesture plays over whatever is felt (or over nothing at all).
+        Object.assign(this.gestureOverlay, ov.active ? ov : NO_OVERLAY);
+        this.gestureOverlay.active = true;
+        this.gestureOverlay.gesture = g;
+        ov = this.gestureOverlay;
+      }
+      if (ov.active) r.pose = applyOverlay(r.pose, ov, this.emotionPose);
+    }
     r.facing = this.state.facing;
     r.squash = this.squash;
     r.bounds = this.getBounds();
@@ -1171,7 +1376,11 @@ export class CatEngine {
     // Tail coarseness scales with quality: at 128 steps the tail alone can
     // author 128 distinct sprites per sway, which a weak machine cannot
     // rasterise. Striding it collapses that proportionally.
-    const stride = TAIL_STRIDE[q];
+    // Asleep the tail barely stirs (a third of its sway), so most of its 40
+    // steps draw the same pixels - yet each was a new sprite and a repaint of
+    // the whole overlay. Eight positions a cycle look the same and cost a fifth.
+    const asleep = this.ctrl.name === "sleep" || this.ctrl.name === "lieDown";
+    const stride = TAIL_STRIDE[q] * (asleep ? 5 : 1);
     r.tailPhase = (Math.floor(this.tailPhase / stride) * stride) % TAIL_PHASE_STEPS;
     // Quantised to ±2 at full quality (was ±1): five steps instead of three, so
     // the head reaches further and moves in finer increments as the cursor
@@ -1182,6 +1391,9 @@ export class CatEngine {
     const hr = HEAD_RANGE[q];
     r.headTurnX = Math.max(-hr, Math.min(hr, Math.round(this.headX)));
     r.headTurnY = Math.max(-hr, Math.min(hr, Math.round(this.headY)));
+    // A sleeping cat does not watch the cursor: behind closed eyes every step
+    // of it was a new sprite and a repaint that looked exactly the same.
+    if (asleep) r.pupilX = r.pupilY = r.headTurnX = r.headTurnY = 0;
     // Only pay for mesh deformation while it would actually be visible. At rest
     // the renderer takes the single-blit fast path.
     if (this.mochi.isAtRest()) {

@@ -117,7 +117,10 @@ export type AnimationName =
   | "drinkWater"
   | "edgePeek"
   | "angry"
-  | "alarmClap";
+  | "alarmClap"
+  // Persona reactions (Paper): built from existing pose features
+  | "sideEye"
+  | "loveHearts";
 
 /** Mutable runtime state of the cat, updated every tick. */
 export interface CatState {

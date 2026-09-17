@@ -14,13 +14,16 @@ import {
   frontLimbs,
   type CostumeLayer,
   type CostumePainter,
+  type CostumeTraits,
   type PoseSpec,
 } from "../animation/spriteLoader";
-import { S, Surface, pxPoly, stampSleeve, type Ctx, type Torso } from "./pixelSurface";
+import { S, Surface, pxPoly, shift, stampSleeve, type Ctx, type Torso } from "./pixelSurface";
 
 export const BATCAT_ID = "mewmuze.bat-cat.v1";
+/** The cowl brings its own bat ears. */
+export const BATCAT_TRAITS: CostumeTraits = { hidesEars: true };
 
-/** The accent colour: badge, belt, cowl rims and the cape lining. */
+/** The accent colour: badge, cowl rims and the cape lining. */
 export const BATCAT_COLOURS = [
   { id: "gold", label: "Signal Gold", hex: "#f2b428" },
   { id: "violet", label: "Night Violet", hex: "#9a5cf0" },
@@ -44,17 +47,6 @@ const SUIT_SH = "#141826";
 const CAPE = "#0f1320";
 const CAPE_LIT = "#1d2438";
 
-function clamp255(v: number): number {
-  return v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
-}
-
-function shift(hex: string, factor: number, lift = 0): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = clamp255(((n >> 16) & 255) * factor + lift);
-  const g = clamp255(((n >> 8) & 255) * factor + lift);
-  const b = clamp255((n & 255) * factor + lift);
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
-}
 
 // ---------------------------------------------------------------------------
 // A predicate fill, for shapes with holes
@@ -108,6 +100,33 @@ function inTri(
 // The cowl
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a horn's point lands, kept on the canvas.
+ *
+ * Unclamped, the default head put the point at y ~ -1.7, above the top of the
+ * sprite, so the tips were sliced off. The cat's own ears clamp to the same
+ * headroom; a big-headed breed gets a shorter horn rather than a cut one.
+ */
+const HORN_TOP = 1.2;
+const hornTip = (base: number, height: number): number => Math.max(HORN_TOP, base - height);
+
+/**
+ * The lit inner face of a horn: a slimmer triangle inside it. Without it each
+ * horn is one flat dark shape that disappears against a dark desktop.
+ */
+function hornFace(
+  ctx: Ctx,
+  earX: number,
+  base: number,
+  half: number,
+  tip: number,
+  lean: number,
+  inMask: (x: number, y: number) => boolean,
+): void {
+  fillWhere(ctx, earX - half, tip - 1, earX + half, base + 1, SUIT_LIT, (x, y) =>
+    inMask(x, y) && inTri(x, y, earX - half * 0.42, base - 0.6, earX + half * 0.42, base - 0.6, earX + lean, tip + 1.6));
+}
+
 /** Where drawFrontFace puts the eyes, in the skull's own units. */
 const EYE_GAP = 5.8;
 const EYE_RX = 4.5;
@@ -140,7 +159,7 @@ function drawCowlFront(ctx: Ctx, skull: Torso, accent: string): void {
   // Wide enough at the base to swallow the cat's own ears, which otherwise
   // poke out either side of the cowl as two grey wedges.
   const earHalf = 3.8 * hs;
-  const earTip = earBase - 9.6 * hs;
+  const earTip = hornTip(earBase, 9.6 * hs);
   const earL = cx - skull.rx * 0.66;
   const earR = cx + skull.rx * 0.66;
 
@@ -168,6 +187,8 @@ function drawCowlFront(ctx: Ctx, skull: Torso, accent: string): void {
     inMask(x, y) && y < cy - ry * 0.42 && y > cy - ry * 0.78);
   fillWhere(ctx, x0, earTip - 1, x1, cy, SUIT_SPEC, (x, y) =>
     inMask(x, y) && y < cy - ry * 0.58 && y > cy - ry * 0.70);
+  hornFace(ctx, earL, earBase, earHalf, earTip, -0.6, inMask);
+  hornFace(ctx, earR, earBase, earHalf, earTip, 0.6, inMask);
   // Accent rim around each opening.
   fillWhere(ctx, x0, cy - ry, x1, cy + ry, accent, (x, y) =>
     inMask(x, y) &&
@@ -193,7 +214,7 @@ function drawCowlBack(ctx: Ctx, skull: Torso): void {
   const ry = skull.ry * 1.02;
   const earBase = cy - ry + 3.2;
   const earHalf = 3.2 * hs;
-  const earTip = earBase - 9.4 * hs;
+  const earTip = hornTip(earBase, 9.4 * hs);
   const earL = cx - skull.rx * 0.62;
   const earR = cx + skull.rx * 0.62;
   const bottom = cy + ry * 0.62;
@@ -205,6 +226,8 @@ function drawCowlBack(ctx: Ctx, skull: Torso): void {
     inEar(x, y) || (inEllipse(x, y, cx, cy, rx, ry) && y <= bottom);
 
   fillWhere(ctx, cx - rx - 5, earTip - 1, cx + rx + 5, cy + ry, SUIT, inMask);
+  hornFace(ctx, earL, earBase, earHalf, earTip, -0.6, inMask);
+  hornFace(ctx, earR, earBase, earHalf, earTip, 0.6, inMask);
   fillWhere(ctx, cx - rx - 5, earTip - 1, cx + rx + 5, cy, SUIT_LIT, (x, y) =>
     inMask(x, y) && y < cy - ry * 0.36 && y > cy - ry * 0.74);
   fillWhere(ctx, cx - rx - 5, cy, cx + rx + 5, cy + ry, SUIT_SH, (x, y) =>
@@ -231,7 +254,7 @@ function drawCowlSide(ctx: Ctx, skull: Torso, accent: string, faces: number): vo
 
   const earBase = cy - ry + 3.0;
   const earHalf = 3.0 * hs;
-  const earTip = earBase - 9.2 * hs;
+  const earTip = hornTip(earBase, 9.2 * hs);
   const earL = cx - 4.6;
   const earR = cx + 4.6;
 
@@ -255,6 +278,8 @@ function drawCowlSide(ctx: Ctx, skull: Torso, accent: string, faces: number): vo
     inMask(x, y) && y < cy - ry * 0.40 && y > cy - ry * 0.76);
   fillWhere(ctx, x0, earTip - 1, x1, cy, SUIT_SPEC, (x, y) =>
     inMask(x, y) && y < cy - ry * 0.56 && y > cy - ry * 0.68);
+  hornFace(ctx, earL, earBase, earHalf, earTip, -0.6, inMask);
+  hornFace(ctx, earR, earBase, earHalf, earTip, 0.6, inMask);
   fillWhere(ctx, x0, cy - ry, x1, cy + ry, accent, (x, y) =>
     inMask(x, y) && inEllipse(x, y, eyeX, eyeY, eyeRx + 0.12, eyeRy + 0.12));
   fillWhere(ctx, x0, cy, x1, cy + ry, SUIT_SH, (x, y) => inMask(x, y) && y > bottom(x) - 0.9);
@@ -404,17 +429,8 @@ function drawSuitFront(s: Surface, t: Torso, accent: string): void {
   s.rect(t.x - t.rx * 1.3, t.y + t.ry * 0.74, t.rx * 2.6, t.ry * 0.56, SUIT_SH);
 
   drawBadge(s, t.x, t.y - t.ry * 0.30, t.rx * 0.40, accent);
-
-  // Utility belt: a band with a buckle and two pouches either side.
-  const beltY = t.y + t.ry * 0.44;
-  const beltH = t.ry * 0.17;
-  s.rect(t.x - t.rx * 1.3, beltY, t.rx * 2.6, beltH, accent);
-  s.rect(t.x - t.rx * 1.3, beltY + beltH * 0.62, t.rx * 2.6, beltH * 0.38, shift(accent, 0.62));
-  for (const f of [-0.72, -0.40, 0.40, 0.72] as const) {
-    s.rect(t.x + f * t.rx - t.rx * 0.05, beltY - beltH * 0.18, t.rx * 0.10, beltH * 1.36, SUIT_SH);
-  }
-  s.rect(t.x - t.rx * 0.16, beltY - beltH * 0.24, t.rx * 0.32, beltH * 1.48, shift(accent, 1.0, 60));
-  s.rect(t.x - t.rx * 0.06, beltY + beltH * 0.14, t.rx * 0.12, beltH * 0.7, SUIT_SH);
+  // No belt: a gold band with pouches is the famous hero's utility belt, and
+  // BatCat has to be its own character. The suit is badge, cowl and cape.
 }
 
 function drawSuitSide(s: Surface, t: Torso, accent: string): void {
@@ -427,22 +443,12 @@ function drawSuitSide(s: Surface, t: Torso, accent: string): void {
   ], SUIT_LIT);
   s.rect(t.x - t.rx * 0.1, t.y - t.ry * 0.92, t.rx * 1.3, t.ry * 0.16, SUIT_SPEC);
   s.rect(t.x - t.rx * 1.3, t.y + t.ry * 0.74, t.rx * 2.6, t.ry * 0.56, SUIT_SH);
-  const beltY = t.y + t.ry * 0.44;
-  const beltH = t.ry * 0.17;
-  s.rect(t.x - t.rx * 1.3, beltY, t.rx * 2.6, beltH, accent);
-  s.rect(t.x - t.rx * 1.3, beltY + beltH * 0.62, t.rx * 2.6, beltH * 0.38, shift(accent, 0.62));
-  for (const f of [-0.55, 0, 0.55] as const) {
-    s.rect(t.x + f * t.rx - t.rx * 0.05, beltY - beltH * 0.18, t.rx * 0.10, beltH * 1.36, SUIT_SH);
-  }
   // Badge sits on the chest, which in profile is forward of centre.
   drawBadge(s, t.x + t.rx * 0.52, t.y - t.ry * 0.26, t.rx * 0.26, accent);
 }
 
-function drawSuitBack(s: Surface, t: Torso, accent: string): void {
+function drawSuitBack(s: Surface, t: Torso): void {
   s.rect(t.x - t.rx * 1.3, t.y - t.ry * 1.3, t.rx * 2.6, t.ry * 2.6, SUIT);
-  const beltY = t.y + t.ry * 0.44;
-  s.rect(t.x - t.rx * 1.3, beltY, t.rx * 2.6, t.ry * 0.17, accent);
-  s.rect(t.x - t.rx * 1.3, beltY + t.ry * 0.105, t.rx * 2.6, t.ry * 0.065, shift(accent, 0.62));
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +501,7 @@ export function batCatPainter(colour: string): CostumePainter {
     else drawCapeFront(ctx, t, head);
     const s = new Surface(ctx, t, side && faces === -1);
     if (side) drawSuitSide(s, t, accent);
-    else if (pose.view === "back") drawSuitBack(s, t, accent);
+    else if (pose.view === "back") drawSuitBack(s, t);
     else drawSuitFront(s, t, accent);
     ctx.restore();
   };

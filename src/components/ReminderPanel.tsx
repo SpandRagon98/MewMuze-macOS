@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { makeScheduled } from "../productivity/scheduledReminders";
 import type { ScheduledReminder } from "../settings/defaultSettings";
+import { Icon } from "./icons";
 
 /**
  * Compact "Add note" dialog from the right-click menu: one line of text that
@@ -20,14 +21,17 @@ export function NotePanel({
   const [text, setText] = useState(initial);
   return (
     <div className="sk-backdrop">
-      <div className="sk-panel reminder-panel" role="dialog" aria-label="Add note">
+      <div className="sk-panel reminder-panel" role="dialog" aria-label="Add note" onKeyDown={(e) => e.key === "Escape" && onClose()}>
         <div className="sk-titlebar">
           <span className="sk-title">
-            <span className="sk-title-badge">📝</span> Add Note
+            <span className="sk-title-badge">
+            <Icon name="note" size={16} />
+          </span>{" "}
+          Add a note
           </span>
           <div className="sk-window-btns">
             <button className="sk-winbtn close" title="Close" aria-label="Close" onClick={onClose}>
-              ×
+              <Icon name="close" size={16} />
             </button>
           </div>
         </div>
@@ -78,11 +82,12 @@ export function ReminderPanel({
   onSave: (reminder: ScheduledReminder) => void;
   onClose: () => void;
 }) {
-  const now = new Date();
+  // Five minutes from now, as one Date: adding to the minutes alone gave 04:02 at 04:57.
+  const now = new Date(Date.now() + 5 * 60_000);
   const pad = (n: number) => String(n).padStart(2, "0");
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`);
-  const [time, setTime] = useState(`${pad(now.getHours())}:${pad((now.getMinutes() + 5) % 60)}`);
+  const [time, setTime] = useState(`${pad(now.getHours())}:${pad(now.getMinutes())}`);
   const [warn, setWarn] = useState(5);
   const [error, setError] = useState("");
 
@@ -101,14 +106,25 @@ export function ReminderPanel({
 
   return (
     <div className="sk-backdrop">
-      <div className="sk-panel reminder-panel" role="dialog" aria-label="Set reminder">
+      <div
+        className="sk-panel reminder-panel"
+        role="dialog"
+        aria-label="Set reminder"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+          else if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") save();
+        }}
+      >
         <div className="sk-titlebar">
           <span className="sk-title">
-            <span className="sk-title-badge">⏰</span> Set Reminder
+            <span className="sk-title-badge">
+            <Icon name="bell" size={16} />
+          </span>{" "}
+          Set a reminder
           </span>
           <div className="sk-window-btns">
             <button className="sk-winbtn close" title="Close" aria-label="Close" onClick={onClose}>
-              ×
+              <Icon name="close" size={16} />
             </button>
           </div>
         </div>

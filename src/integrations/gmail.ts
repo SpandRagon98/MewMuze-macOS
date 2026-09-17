@@ -11,12 +11,17 @@ export interface GmailMessage {
   subject: string;
   /** RFC822 Message-ID without angle brackets; "" when the header was absent. */
   messageId: string;
+  /** Paper backend: still unread / unread and marked Important by Gmail. */
+  unread?: boolean;
+  important?: boolean;
 }
 
 export interface GmailStatus {
   ok: boolean;
   error: string | null;
   unseen: number;
+  /** Paper backend: unread messages Gmail marked Important. */
+  importantUnseen?: number;
   latestUid: number;
   latestFrom: string;
   latestSubject: string;

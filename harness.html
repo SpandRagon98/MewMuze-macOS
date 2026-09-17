@@ -49,9 +49,27 @@
           case "read_agent_status": return null;
           case "get_mic_active": return H.micActive;
           case "verify_license": return { valid:false, name:"", order:"", error:"" };
+          // A trial started yesterday, so every premium panel is reachable.
+          case "trial_status": { const now = Math.floor(Date.now() / 1000); return { vaultAvailable: true, startedUnix: now - 86400, effectiveNowUnix: now }; }
           // Quick Tools. Set H.pdfRender = false to exercise the panel's
           // "renderer unavailable" path without removing pdfium.dll.
           case "convert_support": return { pdfRender: H.pdfRender, reason: H.pdfRender ? "" : "The PDF renderer (pdfium) is not installed alongside the app." };
+          // Set H.modules = false before boot to see the "not installed" pages.
+          case "module_status": return H.modules === false ? null : { id: args.id, state: "installed", progress: 1, bytesDone: 0, bytesTotal: 0, version: "1", storageBytes: 0, error: null };
+          // The Diary's files, in memory (H.diary["index.json"] etc.).
+          case "diary_read": return (H.diary ||= {})[args.name] ?? null;
+          case "diary_write": (H.diary ||= {})[args.name] = args.text; return null;
+          case "diary_delete": delete (H.diary ||= {})[args.name]; return null;
+          case "diary_clear": H.diary = {}; return null;
+          case "diary_dir": return "C:\\harness\\diary";
+          case "provider_key_status": return !!(H.keys ||= {})[args.providerId];
+          case "provider_key_set": (H.keys ||= {})[args.providerId] = true; return null;
+          case "provider_key_remove": delete (H.keys ||= {})[args.providerId]; return null;
+          case "tasks_load": return { main: H.tasks ?? null, backup: null };
+          case "tasks_save": H.tasks = args.json; return null;
+          case "list_installed_costumes": return ["corporate-cat", "bat-cat", "cyberpunk-cat"].map((c) => ({
+            costumeId: `mewmuze.${c}.v1`, version: "1.0.0", installationTime: 0, localPackageLocation: "", signatureStatus: "verified",
+            entitlementIdentifier: c, enabled: true, name: c, creator: "MewMuze", description: "", supportedBodies: ["classic", "chonky", "sleek"], thumbnailDataUrl: null }));
           case "images_to_pdf": return args.output;
           case "pdf_to_images": return [];
           default: return null;
@@ -60,9 +78,13 @@
       // Set H.hang = ["get_media_playing"] to simulate a native command that
       // never returns (the real GSMTC deadlock) and prove the app survives it.
       H.hang = [];
+      // H.emit("tray-command", "settings") drives the app like the tray does.
+      H.listeners = {};
+      H.emit = (event, payload) => (H.listeners[event] || []).forEach((id) => window[`_${id}`]?.({ event, id: 0, payload }));
       window.__TAURI_INTERNALS__ = {
         invoke: (cmd, args) => {
           H.invokes[cmd] = (H.invokes[cmd] || 0) + 1;
+          if (cmd === "plugin:event|listen") (H.listeners[args.event] ||= []).push(args.handler);
           if (H.hang.includes(cmd)) return new Promise(() => {}); // never settles
           return Promise.resolve(reply(cmd, args || {}));
         },
@@ -77,7 +99,7 @@
 
       // Surface any error that would otherwise vanish silently.
       window.__errors = [];
-      window.addEventListener("error", (e) => window.__errors.push("error: " + e.message));
+      window.addEventListener("error", (e) => window.__errors.push("error: " + (e.error?.stack || e.message)));
       window.addEventListener("unhandledrejection", (e) => window.__errors.push("reject: " + e.reason));
     </script>
     <div id="root"></div>

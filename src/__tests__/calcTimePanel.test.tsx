@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CalcTimePanel, CALC_PANEL_SIZE } from "../components/CalcTimePanel";
 import { CatContextMenu } from "../components/OverlayUI";
 import { overlaps, type Area, type Box } from "../quicktools/panelPlacement";
+import { openSubmenu } from "./menuHelpers";
 
 // A cat parked mid-screen with plenty of room on every side.
 const cat: Box = { x: 700, y: 500, width: 64, height: 64 };
@@ -49,8 +50,10 @@ describe("Calc & Time: menu activation", () => {
         onClose={() => undefined}
       />,
     );
+    // It lives in the Quick Tools submenu.
+    openSubmenu(host, "Quick Tools");
     const entry = [...host.querySelectorAll<HTMLElement>(".cat-menu-item")].find((n) =>
-      n.textContent?.includes("Calc & Time"),
+      n.textContent?.includes("Calculator & time"),
     );
     expect(entry, "the Calc & Time menu entry should exist").toBeTruthy();
     // The regression this guards: a `soon` item renders a badge and swallows
@@ -62,21 +65,26 @@ describe("Calc & Time: menu activation", () => {
     expect(seen).toEqual(["calc-time"]);
   });
 
-  it("leaves the still-unfinished Tasks entry disabled", () => {
+  it("Tasks is a working entry now, not a Coming soon badge", () => {
+    const seen: string[] = [];
     render(
       <CatContextMenu
         state={{ x: 10, y: 10 }}
         workMode={false}
         session={null}
         clipboardEnabled
-        onCommand={() => undefined}
+        onCommand={(c) => seen.push(c)}
         onClose={() => undefined}
       />,
     );
+    openSubmenu(host, "Quick Tools");
     const tasks = [...host.querySelectorAll<HTMLElement>(".cat-menu-item")].find((n) =>
       n.textContent?.includes("Tasks"),
     );
-    expect(tasks!.className).toContain("soon");
+    expect(tasks!.className).not.toContain("soon");
+    expect(tasks!.querySelector(".cat-menu-soon")).toBeNull();
+    act(() => tasks!.click());
+    expect(seen).toEqual(["tasks"]);
   });
 });
 

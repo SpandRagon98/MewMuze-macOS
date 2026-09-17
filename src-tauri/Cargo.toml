@@ -71,6 +71,12 @@ keyring = { version = "3", features = ["windows-native", "apple-native"] }
 # credential vault. It is never derived from hardware identifiers.
 uuid = { version = "1", features = ["v4"] }
 
+# ---- Paper: optional local AI modules ------------------------------------
+# Microphone capture for Local Voice (only between an explicit Start and Stop).
+cpal = "0.15"
+# The configurable dictation shortcut.
+tauri-plugin-global-shortcut = "2"
+
 # ---- macOS ---------------------------------------------------------------
 # Deliberately ONE crate. Monitors, click-through, always-on-top, all-Spaces
 # visibility, tray, autostart and deep links all come from Tauri's existing
@@ -103,6 +109,13 @@ windows = { version = "0.58", features = [
   "Win32_System_Memory",
   "Win32_System_StationsAndDesktops",
   "Win32_System_SystemInformation",
+  "Win32_System_Power",
+  "Win32_System_JobObjects",
+  "Win32_System_ProcessStatus",
+  "Win32_Storage_FileSystem",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+  "Devices_Geolocation",
   "Media_Control",
   "Foundation",
   "Foundation_Collections",

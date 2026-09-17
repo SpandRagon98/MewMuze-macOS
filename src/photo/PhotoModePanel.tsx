@@ -25,11 +25,13 @@ import {
   findPose,
   isBranded,
   needsScreenConsent,
+  isFeeling,
   photoFileName,
   type CaptureMode,
+  type PhotoExpression,
 } from "./photoMode";
 import {
-  CARD_THEMES,
+  CARD_THEME,
   canvasToPng,
   composeCard,
   composeCatOnly,
@@ -45,8 +47,10 @@ import {
   revealPhoto,
   savePhoto,
 } from "./photoApi";
+import { Icon } from "../components/icons";
+import { feelPose } from "../emotion/expression";
 
-export const PHOTO_PANEL_SIZE = { width: 300, height: 452 };
+export const PHOTO_PANEL_SIZE = { width: 560, height: 470 };
 
 /** Milliseconds to let the compositor present the hidden panel before the grab. */
 const HIDE_SETTLE_MS = 140;
@@ -59,7 +63,6 @@ export interface PhotoSelection {
 export function PhotoModePanel({
   cat,
   area,
-  theme,
   folder,
   onSelectionChange,
   onFolderChange,
@@ -67,7 +70,6 @@ export function PhotoModePanel({
 }: {
   cat: Box;
   area: Area;
-  theme: "dark" | "light";
   /** Remembered save folder, or "" to ask every time. */
   folder: string;
   /** Tells App which pose/expression to hold the real cat in. */
@@ -159,9 +161,10 @@ export function PhotoModePanel({
       const ctx = cv?.getContext("2d");
       if (!cv || !ctx) return;
       // getPose returns a reused object; copy before keeping or overriding it.
-      const live: PoseSpec = { ...ctrl.getPose() };
+      let live: PoseSpec = { ...ctrl.getPose() };
       if (expression.eyes) live.eyes = expression.eyes;
       if (expression.mouth) live.mouth = expression.mouth;
+      if (expression.emotion) live = feelPose(live, expression.emotion);
       poseRef.current = live;
 
       const sprite = photoSprite(live);
@@ -184,8 +187,8 @@ export function PhotoModePanel({
     const pose = poseRef.current;
     if (!pose) return null;
     const sprite = photoSprite(pose);
-    return isBranded(mode) ? composeCard(sprite, CARD_THEMES[theme]) : composeCatOnly(sprite);
-  }, [mode, theme]);
+    return isBranded(mode) ? composeCard(sprite, CARD_THEME) : composeCatOnly(sprite);
+  }, [mode]);
 
   const buildDesktopCanvas = useCallback(async (): Promise<HTMLCanvasElement | null> => {
     // Hide the panel first: the photo is of the desktop and the cat, not of the
@@ -272,6 +275,11 @@ export function PhotoModePanel({
   const info = captureMode(mode);
   // A desktop photo is blocked until the warning has been read and accepted.
   const blocked = needsScreenConsent(mode) && !screenConsent;
+  const faceChip = (e: PhotoExpression) => (
+    <button key={e.id} className={`sk-chip${expressionId === e.id ? " on" : ""}`} aria-pressed={expressionId === e.id} onClick={() => setExpressionId(e.id)}>
+      {e.label}
+    </button>
+  );
 
   return (
     <div
@@ -289,12 +297,18 @@ export function PhotoModePanel({
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="qt-head">
-        <span className="qt-title">📷 Photo Mode</span>
+        <span className="qt-title">
+          <Icon name="camera" size={18} /> Photo Mode
+        </span>
         <button className="qt-x" onClick={onClose} aria-label="Close Photo Mode" title="Close">
-          ✕
+          <Icon name="close" size={16} />
         </button>
       </div>
 
+      <div className="pm-body">
+      {/* Left: the shot itself and how it is taken. Right: what the cat is
+          doing. Side by side, every choice fits on one screen. */}
+      <div className="pm-col">
       <div className="pm-stage">
         <canvas
           ref={previewRef}
@@ -305,35 +319,8 @@ export function PhotoModePanel({
         />
       </div>
 
-      <div className="qt-section">Pose</div>
-      <div className="pm-chips">
-        {PHOTO_POSES.map((p) => (
-          <button
-            key={p.id}
-            className={`sk-chip${poseId === p.id ? " on" : ""}`}
-            aria-pressed={poseId === p.id}
-            onClick={() => setPoseId(p.id)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="qt-section">Expression</div>
-      <div className="pm-chips">
-        {PHOTO_EXPRESSIONS.map((e) => (
-          <button
-            key={e.id}
-            className={`sk-chip${expressionId === e.id ? " on" : ""}`}
-            aria-pressed={expressionId === e.id}
-            onClick={() => setExpressionId(e.id)}
-          >
-            {e.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="qt-section">Capture</div>
+      <section className="qt-group pm-capture">
+      <h3 className="qt-group-head">Capture</h3>
       <div className="pm-modes">
         {CAPTURE_MODES.map((m) => (
           <button
@@ -377,6 +364,35 @@ export function PhotoModePanel({
         <button className="pixel-btn" onClick={onOpenFolder} disabled={busy || !saved}>
           Open folder
         </button>
+      </div>
+      </section>
+      </div>
+
+      <div className="pm-col">
+      <section className="qt-group">
+      <h3 className="qt-group-head">Pose</h3>
+      <div className="pm-chips">
+        {PHOTO_POSES.map((p) => (
+          <button
+            key={p.id}
+            className={`sk-chip${poseId === p.id ? " on" : ""}`}
+            aria-pressed={poseId === p.id}
+            onClick={() => setPoseId(p.id)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      </section>
+
+      <section className="qt-group">
+      <h3 className="qt-group-head">Expression</h3>
+      <div className="pm-chips">{PHOTO_EXPRESSIONS.filter((e) => !isFeeling(e)).map(faceChip)}</div>
+      <h3 className="qt-group-head pm-sub">Feeling</h3>
+      <div className="pm-chips">{PHOTO_EXPRESSIONS.filter(isFeeling).map(faceChip)}</div>
+      </section>
+      </div>
       </div>
 
       {status && <div className="pm-status">{status}</div>}

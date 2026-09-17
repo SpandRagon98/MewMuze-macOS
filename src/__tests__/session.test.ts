@@ -6,7 +6,7 @@ import {
   breakColor,
   formatMMSS,
   focusDrift,
-  FOCUS_GREEN,
+  FOCUS_COLOUR,
 } from "../productivity/session";
 
 describe("focus / break sessions", () => {
@@ -18,13 +18,13 @@ describe("focus / break sessions", () => {
     expect(formatMMSS(-5)).toBe("0:00"); // never negative
   });
 
-  it("focus counts up from zero on a steady green, no bar", () => {
+  it("focus counts up from zero in one steady colour, no bar", () => {
     const t0 = 1_000_000;
     const s = startFocus(t0);
     const v0 = sessionView(s, t0);
     expect(v0.kind).toBe("focus");
     expect(v0.label).toBe("0:00");
-    expect(v0.color).toBe(FOCUS_GREEN);
+    expect(v0.color).toBe(FOCUS_COLOUR);
     expect(v0.fraction).toBe(0);
     expect(v0.text).toBe("#ffffff");
     const v90 = sessionView(s, t0 + 90_000);
@@ -53,7 +53,7 @@ describe("focus / break sessions", () => {
     const done = sessionView(s, t0 + 300_000);
     expect(done.overrun).toBe(true);
     expect(done.label).toBe("0:00");
-    expect(done.color).toBe("#c0392b");
+    expect(done.color).toBe("#ef5b64");
     const past = sessionView(s, t0 + 360_000);
     expect(past.overrun).toBe(true);
     expect(past.fraction).toBe(1); // bar stays full, never overflows
@@ -63,12 +63,12 @@ describe("focus / break sessions", () => {
     const green = breakColor(0, false);
     const amber = breakColor(1, false);
     const red = breakColor(0.5, true);
-    expect(green).toBe("rgb(46, 158, 79)"); // start green
-    expect(amber).toBe("rgb(212, 160, 23)"); // deep amber at the end
-    expect(red).toBe("#c0392b"); // overrun always red regardless of fraction
+    expect(green).toBe("rgb(76, 195, 138)"); // start green
+    expect(amber).toBe("rgb(230, 200, 92)"); // amber-yellow at the end, never orange
+    expect(red).toBe("#ef5b64"); // overrun always red regardless of fraction
     // Mid-break sits between the two endpoints (a real interpolation).
     const mid = breakColor(0.5, false);
-    expect(mid).toBe("rgb(129, 159, 51)");
+    expect(mid).toBe("rgb(153, 198, 115)");
     // Out-of-range fractions clamp rather than extrapolating.
     expect(breakColor(-1, false)).toBe(green);
     expect(breakColor(2, false)).toBe(amber);
@@ -105,7 +105,7 @@ describe("focus mode app guard", () => {
 
   it("never scolds the user for interacting with the cat", () => {
     // Right-clicking, dragging or opening settings makes MewMuze foreground.
-    for (const own of ["MewMuze.exe", "mewmuze.exe", "mewmuze", "pixel-cat-companion.exe"]) {
+    for (const own of ["MewMuze.exe", "mewmuze.exe", "mewmuze", "pixel-cat-companion.exe", "MewMuzePaper.exe"]) {
       expect(focusDrift(own, "code.exe"), `${own} should be ignored`).toEqual({ kind: "ignore" });
     }
   });

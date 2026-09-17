@@ -666,7 +666,11 @@ pub fn get_monitors() -> Vec<MonitorInfoOut> {
 /// video, game, or presentation) — used for Peek Mode. Only geometry and the
 /// window class (to exclude the desktop shell itself) are inspected.
 #[tauri::command]
-pub fn is_fullscreen_active() -> bool {
+pub fn is_fullscreen_active(window: tauri::WebviewWindow) -> bool {
+    #[cfg(windows)]
+    crate::overlay::keep_topmost(&window);
+    #[cfg(not(windows))]
+    let _ = window;
     #[cfg(target_os = "macos")]
     {
         return imp_mac::is_fullscreen_active();

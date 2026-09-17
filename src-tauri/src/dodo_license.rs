@@ -31,7 +31,10 @@ fn license_lock() -> MutexGuard<'static, ()> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-const KEYRING_SERVICE: &str = "com.spandan.pixelcat";
+// Paper: its own credential-vault namespace. Sharing "com.spandan.pixelcat" with
+// Pro let the experiment read, refresh - and potentially deactivate - the
+// production licence. Paper must never touch Pro's licence state.
+const KEYRING_SERVICE: &str = "com.spandan.pixelcat.paper";
 const KEYRING_ACCOUNT: &str = "dodo-license";
 const KEYRING_KEY_ACCOUNT: &str = "dodo-license-key";
 const PRODUCT_ID: &str = match option_env!("MEWMUZE_DODO_PRODUCT_ID") {

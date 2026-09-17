@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "look-preview",
+  "description": "The Look Preview window: its own chrome and events, nothing else.",
+  "windows": ["look-preview"],
+  "permissions": ["core:default", "core:event:default", "core:window:default", "core:window:allow-close", "core:window:allow-minimize", "core:window:allow-start-dragging"]
+}

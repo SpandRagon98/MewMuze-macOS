@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { PhotoModePanel } from "../photo/PhotoModePanel";
 import { PHOTO_EXPRESSIONS, PHOTO_POSES } from "../photo/photoMode";
 import { CatContextMenu } from "../components/OverlayUI";
+import { allMenuLabels } from "./menuHelpers";
 
 const cat = { x: 400, y: 400, width: 64, height: 64 };
 const area = { left: 0, top: 0, right: 1920, bottom: 1032 };
@@ -41,7 +42,6 @@ describe("Photo Mode panel", () => {
         <PhotoModePanel
           cat={cat}
           area={area}
-          theme="dark"
           folder=""
           onSelectionChange={onSelectionChange}
           onFolderChange={onFolderChange}
@@ -94,6 +94,28 @@ describe("Photo Mode panel", () => {
     const rows = host.querySelectorAll(".pm-chips");
     expect(rows[0].querySelectorAll(".sk-chip.on")).toHaveLength(1);
     expect(rows[1].querySelectorAll(".sk-chip.on")).toHaveLength(1);
+  });
+
+  it("shows every whole feeling at once, no side-scrolling", () => {
+    render();
+    // Pose, faces, then feelings: each group is a wrapped row of its own.
+    const feelingsRow = host.querySelectorAll(".pm-chips")[2];
+    const feelings = Array.from(feelingsRow.querySelectorAll(".sk-chip")).map((c) => c.textContent);
+    expect(feelings).toEqual(["Sad", "Crying", "Savage", "Victory", "Shy", "Angry", "Curious", "Excited"]);
+    click(Array.from(feelingsRow.querySelectorAll<HTMLButtonElement>(".sk-chip")).find((b) => b.textContent === "Crying")!);
+    expect(feelingsRow.querySelector(".sk-chip.on")?.textContent).toBe("Crying");
+  });
+
+  it("groups its choices into labelled sections", () => {
+    render();
+    // Left column: the shot. Right column: the cat.
+    const heads = Array.from(host.querySelectorAll(".qt-group-head")).map((h) => h.textContent);
+    expect(heads).toEqual(["Capture", "Pose", "Expression", "Feeling"]);
+    const cols = host.querySelectorAll(".pm-body .pm-col");
+    expect(cols).toHaveLength(2);
+    expect(cols[0].querySelector(".pm-stage")).toBeTruthy();
+    expect(cols[0].querySelector(".pm-capture")).toBeTruthy();
+    expect(cols[1].querySelectorAll(".pm-chips")).toHaveLength(3);
   });
 
   it("opens on Cat only, with no screen warning in sight", () => {
@@ -211,17 +233,19 @@ describe("right-click menu", () => {
 
   it("gains Photo Mode without losing any existing item", () => {
     renderMenu();
-    const text = host.textContent ?? "";
+    // The redesign grouped the menu into submenus; every earlier action must
+    // still be reachable somewhere in it.
+    const text = allMenuLabels(host).join("|");
     expect(text).toContain("Photo Mode");
     for (const existing of [
-      "Work mode",
-      "Focus mode",
-      "Break",
-      "Set Reminder",
-      "Add note",
-      "Calc & Time",
+      "Work Mode",
+      "Start focusing",
+      "Take a break",
+      "Set a reminder",
+      "Add a note",
+      "Calculator & time",
       "Settings",
-      "Close app",
+      "Quit MewMuze",
     ]) {
       expect(text, `menu lost "${existing}"`).toContain(existing);
     }

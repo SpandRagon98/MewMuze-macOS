@@ -3,6 +3,7 @@ import {
   minimizeActivationWindow,
   setActivationWindowMode,
 } from "../native/activationWindow";
+import { Icon } from "./icons";
 
 /**
  * Blocking activation window.
@@ -60,7 +61,10 @@ export function LicenseGate({
       <div className="sk-panel license-gate" role="dialog" aria-label="Activate MewMuze">
         <div className="sk-titlebar">
           <span className="sk-title">
-            <span className="sk-title-badge">🐈‍⬛</span> Activate MewMuze
+            <span className="sk-title-badge">
+            <Icon name="cat" size={16} />
+          </span>{" "}
+          Activate MewMuze
           </span>
           <div className="sk-window-btns" aria-label="Activation window controls">
             <button
@@ -70,7 +74,7 @@ export function LicenseGate({
               title="Minimize"
               onClick={() => void minimizeActivationWindow()}
             >
-              —
+              <Icon name="minus" size={16} />
             </button>
             <button
               className="sk-winbtn close"
@@ -79,7 +83,7 @@ export function LicenseGate({
               title="Close MewMuze"
               onClick={onQuit}
             >
-              ×
+              <Icon name="close" size={16} />
             </button>
           </div>
         </div>
@@ -92,12 +96,12 @@ export function LicenseGate({
           </p>
 
           <div className="gate-important" role="note" aria-label="Important licence email instructions">
-            <strong>IMPORTANT — CHECK YOUR EMAIL</strong>
+            <strong>Your key is in your email</strong>
             <p>
               Dodo Payments sent your MewMuze licence key to the email address used at purchase.
               Copy the key from that email and paste it below.
             </p>
-            <small>If you cannot see it, check your Spam and Promotions folders.</small>
+            <small>Can't find it? Check your Spam and Promotions folders.</small>
           </div>
 
           <label className="sk-label" htmlFor="gate-key">
@@ -137,7 +141,7 @@ export function LicenseGate({
           </div>
 
           <p className="gate-foot">
-            The key is securely saved after the first activation and stays active through normal updates.
+            Your key is saved securely after the first activation and keeps working through updates.
           </p>
           <div className="gate-links" aria-label="Purchase and licence help">
             <button className="gate-link" type="button" onClick={onBuy}>

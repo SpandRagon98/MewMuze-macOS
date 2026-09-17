@@ -1,4 +1,5 @@
 import { PANEL_GAP, placePanel, type Area, type Box } from "../quicktools/panelPlacement";
+import { Icon } from "../components/icons";
 
 export const CLIPBOARD_BADGE_SIZE = { width: 22, height: 22 };
 export const CLIPBOARD_BADGE_GAP = 4;
@@ -41,7 +42,7 @@ export function ClipboardBadge({
       }}
       onClick={onOpen}
     >
-      <span aria-hidden="true">▤</span>
+      <Icon name="clipboard" size={16} />
     </button>
   );
 }

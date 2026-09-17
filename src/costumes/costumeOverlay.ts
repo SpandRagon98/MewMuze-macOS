@@ -1,10 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   bodyAnchors,
+  headTiltPivot,
+  renderFrameWith,
   setCostumePainter,
   type BodyEllipse,
   type CatView,
   type CostumePainter,
+  type CostumeTraits,
   type PoseSpec,
 } from "../animation/spriteLoader";
 
@@ -44,9 +47,20 @@ interface LoadedLayer extends Omit<VisualLayerPayload, "dataUrl"> {
 
 type ArmorVariant = "base" | "maskOpen" | "eyeGlow";
 
-import { paintCorporateCat, CORPORATE_CAT_ID } from "./corporateCat";
-import { cyberpunkPainter, resolveCyberpunkColour, CYBERPUNK_CAT_ID } from "./cyberpunkCat";
-import { batCatPainter, resolveBatcatColour, BATCAT_ID } from "./batCat";
+import { corporatePainter, resolveCorporateColour, CORPORATE_CAT_ID, CORPORATE_TRAITS } from "./corporateCat";
+import { cyberpunkPainter, resolveCyberpunkColour, CYBERPUNK_CAT_ID, CYBERPUNK_TRAITS } from "./cyberpunkCat";
+import { batCatPainter, resolveBatcatColour, BATCAT_ID, BATCAT_TRAITS } from "./batCat";
+
+/** What each costume covers, as the costume declares it (packaged costumes: nothing yet). */
+const TRAITS: Record<string, CostumeTraits> = {
+  [CORPORATE_CAT_ID]: CORPORATE_TRAITS,
+  [CYBERPUNK_CAT_ID]: CYBERPUNK_TRAITS,
+  [BATCAT_ID]: BATCAT_TRAITS,
+};
+
+export function costumeTraits(costumeId: string): CostumeTraits {
+  return TRAITS[costumeId] ?? {};
+}
 
 /**
  * Costumes drawn INSIDE the sprite instead of composited over the finished
@@ -64,7 +78,10 @@ import { batCatPainter, resolveBatcatColour, BATCAT_ID } from "./batCat";
  * must change whenever the drawing would.
  */
 const PROCEDURAL: Record<string, (tint: string) => { painter: CostumePainter; key: string }> = {
-  [CORPORATE_CAT_ID]: () => ({ painter: paintCorporateCat, key: CORPORATE_CAT_ID }),
+  [CORPORATE_CAT_ID]: (tint) => {
+    const colour = resolveCorporateColour(tint);
+    return { painter: corporatePainter(colour), key: `${CORPORATE_CAT_ID}:${colour}` };
+  },
   [CYBERPUNK_CAT_ID]: (tint) => {
     const colour = resolveCyberpunkColour(tint);
     return { painter: cyberpunkPainter(colour), key: `${CYBERPUNK_CAT_ID}:${colour}` };
@@ -166,12 +183,34 @@ export async function activateCostumeOverlay(costumeId: string): Promise<string[
   return payload.supportedBodies;
 }
 
+const previewPainters = new Map<string, CostumePainter>();
+
+/**
+ * A procedural costume on the cat as it looks right now, for a preview card.
+ * Leaves the costume the cat is actually wearing untouched.
+ */
+export function previewCostumeFrame(costumeId: string, tint: string, pose: PoseSpec, size?: number): HTMLCanvasElement {
+  const make = PROCEDURAL[costumeId];
+  if (!make) return renderFrameWith(pose, null, size);
+  const key = `${costumeId}:${tint}`;
+  let painter = previewPainters.get(key);
+  if (!painter) {
+    painter = make(tint).painter;
+    previewPainters.set(key, painter);
+  }
+  return renderFrameWith(pose, painter, size);
+}
+
 export function costumeOverlayEpoch(): number {
   return overlayEpochValue;
 }
 
 export function activeCostume(): string {
   return activeCostumeId;
+}
+
+export function activeCostumeTraits(): CostumeTraits {
+  return costumeTraits(activeCostumeId);
 }
 
 function variantAt(now: number, layers: LoadedLayer[]): ArmorVariant {
@@ -241,6 +280,13 @@ function drawAnchored(
     sy = Math.min(Math.max(sy, uniform / limit), uniform * limit);
   }
 
+  // A hat or helmet tilts with the head it sits on, about the same neck pivot.
+  const pivot = layer.anchor === "head" ? headTiltPivot(pose) : null;
+  if (pivot) {
+    ctx.translate(pivot.x * unit, pivot.y * unit);
+    ctx.rotate((pose.headTilt * Math.PI) / 180);
+    ctx.translate(-pivot.x * unit, -pivot.y * unit);
+  }
   ctx.translate((target.x + layer.offsetX) * unit, (target.y + layer.offsetY) * unit);
   ctx.scale(sx * layer.scale, sy * layer.scale);
   ctx.translate(-reference.x * unit, -reference.y * unit);
@@ -622,7 +668,7 @@ export function renderIronManCatCostume(
   const canvas = document.createElement("canvas");
   canvas.width = base.width;
   canvas.height = base.height;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true }); // a frame, read back by the outline pass: software
   if (!ctx) return base;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(base, 0, 0);
@@ -682,7 +728,7 @@ export function composeCostumeSprite(
   const canvas = document.createElement("canvas");
   canvas.width = base.width;
   canvas.height = base.height;
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true }); // a frame, read back by the outline pass: software
   if (!ctx) return base;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(base, 0, 0);

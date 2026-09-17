@@ -50,6 +50,18 @@ describe("costume coverage", () => {
     }
   });
 
+  it("puts accessories on top of a costume's face layer, never under it", () => {
+    // With the costume painted after the accessory, a cap or glasses chosen
+    // with a cowl or visor on was buried under it and never seen.
+    // drawFrontFace tilts the head and hands the painting to paintFrontFace.
+    const face = bodyOf("paintFrontFace");
+    const seam = face.indexOf('paintCostume(ctx, pose, "face")');
+    expect(seam).toBeGreaterThan(-1);
+    expect(face.indexOf("frontAccessory(ctx")).toBeGreaterThan(seam);
+    const side = bodyOf("drawSide");
+    expect(side.lastIndexOf("sideAccessory(ctx")).toBeGreaterThan(side.lastIndexOf('paintCostume(ctx, pose, "face")'));
+  });
+
   it("no branch returns before the cat is dressed", () => {
     // Containing a paintCostume call is not enough. drawBack has a whole
     // separate silhouette for the climbing cat that returned before reaching
@@ -101,9 +113,15 @@ describe("costume coverage", () => {
     const faces = (name: string) =>
       [...bodyOf(name).matchAll(/paintCostume\(ctx, pose, "face"\)/g)].length;
     expect(faces("drawSide"), "drawSide: main path + curled sleeper").toBe(2);
-    expect(faces("drawFront"), "drawFront: the standing cat").toBe(1);
-    expect(faces("drawHangingFront"), "drawHangingFront").toBe(1);
-    expect(faces("drawThreeQuarter"), "drawThreeQuarter").toBe(1);
+    // The three front paths share ONE seam, inside the face they all draw -
+    // which is what lets the accessory go on after the costume in one place.
+    // (drawFrontFace only tilts the head and paints it through paintFrontFace.)
+    expect(bodyOf("drawFrontFace")).toContain("paintFrontFace(");
+    expect(faces("paintFrontFace"), "paintFrontFace: the shared front seam").toBe(1);
+    for (const path of ["drawFront", "drawHangingFront", "drawThreeQuarter"]) {
+      expect(bodyOf(path), `${path} must draw the shared face`).toContain("drawFrontFace(ctx");
+      expect(faces(path), `${path} must not paint the face twice`).toBe(0);
+    }
     // The back view has no face to dress; anything worn on the head rides its
     // torso seam, which drawBack paints after the skull.
     expect(faces("drawBack"), "drawBack has no face").toBe(0);

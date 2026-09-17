@@ -22,14 +22,46 @@ import {
   bodyAnchors,
   frontLimbs,
   type CostumeLayer,
+  type CostumePainter,
+  type CostumeTraits,
   type LimbPoint,
   type PoseSpec,
 } from "../animation/spriteLoader";
-import { S, Surface, stampSleeve, type Ctx, type Torso } from "./pixelSurface";
+import { S, Surface, shift, stampSleeve, type Ctx, type Torso } from "./pixelSurface";
 
-const NAVY = "#1b2b4d";
-const NAVY_HI = "#2c4373";
-const NAVY_SH = "#0e1830";
+/**
+ * Suit colours offered in Settings. Navy first: it is what the costume was
+ * designed around, and what an existing install keeps.
+ */
+export const CORPORATE_COLOURS = [
+  { id: "navy", label: "Navy Blue", hex: "#1b2b4d" },
+  { id: "charcoal", label: "Charcoal", hex: "#3b4049" },
+  { id: "gray", label: "Light Gray", hex: "#aeb4bd" },
+  { id: "sky", label: "Light Blue", hex: "#8db3dc" },
+  { id: "black", label: "Black", hex: "#1c1d21" },
+  { id: "tan", label: "Tan", hex: "#b3946b" },
+] as const;
+
+export const DEFAULT_CORPORATE_COLOUR = CORPORATE_COLOURS[0].hex;
+
+/** The chosen hex, or navy if it is not one this costume offers. */
+export function resolveCorporateColour(hex: string): string {
+  return CORPORATE_COLOURS.some((c) => c.hex === hex) ? hex : DEFAULT_CORPORATE_COLOUR;
+}
+
+/** The jacket's three tones, all derived from the one chosen colour. */
+interface Suit {
+  base: string;
+  lit: string;
+  shade: string;
+}
+
+function suitFor(hex: string): Suit {
+  // Navy is kept to its original hand-picked tones, so the default suit looks
+  // exactly as it did before colours existed.
+  if (hex === DEFAULT_CORPORATE_COLOUR) return { base: "#1b2b4d", lit: "#2c4373", shade: "#0e1830" };
+  return { base: hex, lit: shift(hex, 1.0, 30), shade: shift(hex, 0.56) };
+}
 const SHIRT = "#f5f8fb";
 const SHIRT_SH = "#cfd7e2";
 const TIE = "#8c2b3d";
@@ -42,7 +74,7 @@ const TIE_HI = "#a8384c";
  * the collar stays at the shoulder and the hem at the belly whether the cat is
  * standing, sitting, crouching or stretched out flat.
  */
-function drawSide(s: Surface, t: Torso): void {
+function drawSide(s: Surface, t: Torso, p: Suit): void {
   // The cat faces +x in side view; the renderer mirrors the finished sprite for
   // a left-facing cat, so this is drawn once for "facing right".
   // The chest opening sits INBOARD, not at the leading edge: the torso ellipse
@@ -52,7 +84,7 @@ function drawSide(s: Surface, t: Torso): void {
 
   // Body of the jacket. Clipped to the torso, so this rectangle takes the
   // body's own curve rather than looking like a rectangle.
-  s.rect(t.x - t.rx * 1.05, t.y - t.ry * 1.05, t.rx * 2.1, t.ry * 2.1, NAVY);
+  s.rect(t.x - t.rx * 1.05, t.y - t.ry * 1.05, t.rx * 2.1, t.ry * 2.1, p.base);
 
   // Shirt: a broad panel over the front half of the body.
   s.poly([
@@ -74,7 +106,7 @@ function drawSide(s: Surface, t: Torso): void {
     [chest + t.rx * 0.14, t.y - t.ry * 1.05],
     [chest + t.rx * 0.40, t.y + t.ry * 1.05],
     [chest - t.rx * 0.10, t.y + t.ry * 1.05],
-  ], NAVY_HI);
+  ], p.lit);
 
   // Shoulder highlight behind the lapel.
   s.poly([
@@ -83,10 +115,10 @@ function drawSide(s: Surface, t: Torso): void {
     [chest - t.rx * 0.30, t.y - t.ry * 1.05],
     [chest - t.rx * 0.42, t.y - t.ry * 0.30],
     [t.x - t.rx * 1.05, t.y + t.ry * 0.10],
-  ], NAVY_HI);
+  ], p.lit);
 
   // Hem band along the belly.
-  s.rect(t.x - t.rx * 1.05, t.y + t.ry * 0.62, t.rx * 1.5, t.ry * 0.5, NAVY_SH);
+  s.rect(t.x - t.rx * 1.05, t.y + t.ry * 0.62, t.rx * 1.5, t.ry * 0.5, p.shade);
 
   // Tie down the shirt panel.
   const tie = chest + t.rx * 0.52;
@@ -105,8 +137,8 @@ function drawSide(s: Surface, t: Torso): void {
 }
 
 /** The front jacket: symmetric, both lapels, tie down the middle. */
-function drawFront(s: Surface, t: Torso): void {
-  s.rect(t.x - t.rx * 1.05, t.y - t.ry * 1.05, t.rx * 2.1, t.ry * 2.1, NAVY);
+function drawFront(s: Surface, t: Torso, p: Suit): void {
+  s.rect(t.x - t.rx * 1.05, t.y - t.ry * 1.05, t.rx * 2.1, t.ry * 2.1, p.base);
 
   // Shoulders catch the light; the lower body falls into shadow.
   s.poly([
@@ -115,8 +147,8 @@ function drawFront(s: Surface, t: Torso): void {
     [t.x + t.rx * 1.05, t.y - t.ry * 0.62],
     [t.x, t.y - t.ry * 0.30],
     [t.x - t.rx * 1.05, t.y - t.ry * 0.62],
-  ], NAVY_HI);
-  s.rect(t.x - t.rx * 1.05, t.y + t.ry * 0.60, t.rx * 2.1, t.ry * 0.5, NAVY_SH);
+  ], p.lit);
+  s.rect(t.x - t.rx * 1.05, t.y + t.ry * 0.60, t.rx * 2.1, t.ry * 0.5, p.shade);
 
   // Shirt: a V, wide at the collar and converging at the button. A parallel
   // band read as a bib; the taper is what makes it a jacket opening.
@@ -140,7 +172,7 @@ function drawFront(s: Surface, t: Torso): void {
       [t.x + side * t.rx * 0.50, t.y - t.ry * 1.05],
       [t.x + side * t.rx * 0.15, t.y + t.ry * 0.44],
       [t.x + side * t.rx * 0.44, t.y + t.ry * 0.40],
-    ], NAVY_HI);
+    ], p.lit);
   }
 
   // Tie.
@@ -159,16 +191,16 @@ function drawFront(s: Surface, t: Torso): void {
 }
 
 /** The back: all jacket, with a collar band and a centre vent. */
-function drawBack(s: Surface, t: Torso): void {
-  s.rect(t.x - t.rx * 1.05, t.y - t.ry * 1.05, t.rx * 2.1, t.ry * 2.1, NAVY);
+function drawBack(s: Surface, t: Torso, p: Suit): void {
+  s.rect(t.x - t.rx * 1.05, t.y - t.ry * 1.05, t.rx * 2.1, t.ry * 2.1, p.base);
   s.poly([
     [t.x - t.rx * 0.42, t.y - t.ry * 1.05],
     [t.x + t.rx * 0.42, t.y - t.ry * 1.05],
     [t.x + t.rx * 0.36, t.y - t.ry * 0.70],
     [t.x - t.rx * 0.36, t.y - t.ry * 0.70],
-  ], NAVY_HI);
-  s.rect(t.x - t.rx * 0.05, t.y - t.ry * 0.10, t.rx * 0.1, t.ry * 1.15, NAVY_SH);
-  s.rect(t.x - t.rx * 1.05, t.y + t.ry * 0.60, t.rx * 2.1, t.ry * 0.5, NAVY_SH);
+  ], p.lit);
+  s.rect(t.x - t.rx * 0.05, t.y - t.ry * 0.10, t.rx * 0.1, t.ry * 1.15, p.shade);
+  s.rect(t.x - t.rx * 1.05, t.y + t.ry * 0.60, t.rx * 2.1, t.ry * 0.5, p.shade);
 }
 
 /**
@@ -179,19 +211,18 @@ function drawBack(s: Surface, t: Torso): void {
  * clapping - instead of sitting still while the arm animates underneath it.
  * Only the upper half: a blazer has a cuff, not a glove.
  */
-function drawSleeve(ctx: Ctx, limb: { from: LimbPoint; ctrl: LimbPoint; to: LimbPoint }, width: number): void {
+function drawSleeve(ctx: Ctx, limb: { from: LimbPoint; ctrl: LimbPoint; to: LimbPoint }, width: number, p: Suit): void {
   const r = width / 2;
-  // Down past the hem, or the sleeve never leaves the jacket and there is no
-  // arm to see. A lit top edge, a shadow underneath, then a white shirt cuff
-  // right above the paw - the cuff is what turns a navy stripe into a sleeve.
-  stampSleeve(ctx, limb, 0, 0.80, r, NAVY);
-  stampSleeve(ctx, limb, 0, 0.30, r * 0.62, NAVY_HI);
-  // The jacket covers the arm down to about y 41.6, and the paw starts at 41.1
-  // - so this narrow band across the wrist is the ONLY part of the sleeve that
-  // can ever be seen. A dark line, then a white cuff over the top of the paw:
-  // that pair is what turns a navy ball into a cat with hands.
-  stampSleeve(ctx, limb, 0.66, 0.78, r * 0.92, NAVY_SH);
-  stampSleeve(ctx, limb, 0.78, 0.94, r * 0.95, SHIRT);
+  // A navy arm over a navy blazer has nothing to separate it from the body,
+  // so every raised paw vanished and only the cuff showed. Three things make
+  // it a tube in front of the chest instead: a shadow outline round it, a lit
+  // crease down its length, and a shadowed cuff. The outline starts clear of
+  // the shoulder so it does not ring the joint.
+  stampSleeve(ctx, limb, 0.14, 0.80, r + 0.42, p.shade);
+  stampSleeve(ctx, limb, 0, 0.80, r, p.base);
+  stampSleeve(ctx, limb, 0.04, 0.70, r * 0.5, p.lit);
+  stampSleeve(ctx, limb, 0.76, 0.94, r * 0.95 + 0.32, p.shade);
+  stampSleeve(ctx, limb, 0.79, 0.94, r * 0.95, SHIRT);
   stampSleeve(ctx, limb, 0.92, 0.94, r * 0.88, SHIRT_SH);
 }
 
@@ -202,10 +233,29 @@ function drawSleeve(ctx: Ctx, limb: { from: LimbPoint; ctrl: LimbPoint; to: Limb
  * forelegs, the keyboard and the laptop all draw ON TOP of the clothing - the
  * z-order a real garment has.
  */
-export function paintCorporateCat(ctx: Ctx, pose: PoseSpec, layer: CostumeLayer): void {
+/**
+ * Build a painter for one suit colour.
+ *
+ * A closure, like the Cyberpunk jacket's: the colour is baked into the
+ * function the renderer holds, and the same colour goes into the sprite cache
+ * key, so a cached frame can never come back in the previous colour.
+ */
+export function corporatePainter(colour: string): CostumePainter {
+  const p = suitFor(resolveCorporateColour(colour));
+  return (ctx: Ctx, pose: PoseSpec, layer: CostumeLayer): void => paintSuit(ctx, pose, layer, p);
+}
+
+function paintSuit(ctx: Ctx, pose: PoseSpec, layer: CostumeLayer, p: Suit): void {
+  // Nothing is worn on the head. The "face" seam runs LAST, after the paws and
+  // props, so answering it with the jacket repainted the torso over every raised
+  // arm, the book, the keyboard and the notebook.
+  if (layer === "face") return;
   const { torso, faces } = bodyAnchors(pose);
-  const rx = torso.rx * 0.94;
-  const ry = torso.ry * 0.94;
+  // EXACTLY the ellipse the renderer draws for the body. A shrunken copy left
+  // a ring of bare fur round the jacket, which is most of why it read as an
+  // image laid over the cat rather than something it was wearing.
+  const rx = torso.rx;
+  const ry = torso.ry;
   if (rx <= 0 || ry <= 0) return;
   const t: Torso = { x: torso.x, y: torso.y, rx, ry };
 
@@ -217,7 +267,7 @@ export function paintCorporateCat(ctx: Ctx, pose: PoseSpec, layer: CostumeLayer)
     ctx.save();
     ctx.scale(1 / S, 1 / S);
     for (const limb of frontLimbs(pose, torso.y + 2)) {
-      drawSleeve(ctx, limb, 2.9);
+      drawSleeve(ctx, limb, 2.4, p);
     }
     ctx.restore();
     return;
@@ -235,15 +285,17 @@ export function paintCorporateCat(ctx: Ctx, pose: PoseSpec, layer: CostumeLayer)
   const surface = new Surface(ctx, t, pose.view === "side" && faces === -1);
 
   if (pose.view === "side") {
-    drawSide(surface, t);
+    drawSide(surface, t, p);
   } else if (pose.view === "back") {
-    drawBack(surface, t);
+    drawBack(surface, t, p);
   } else {
-    drawFront(surface, t);
+    drawFront(surface, t, p);
   }
-  // Last, so it sits over every panel it borders.
-  surface.edge(NAVY_SH);
+  // No outline: a dark ring round the whole garment is exactly what made it
+  // look like a sticker. The body's own silhouette is the jacket's edge.
   ctx.restore();
 }
 
 export const CORPORATE_CAT_ID = "mewmuze.corporate-cat.v1";
+/** A suit covers nothing the face uses. */
+export const CORPORATE_TRAITS: CostumeTraits = {};

@@ -14,6 +14,7 @@
 //! costume are correct by construction rather than by a second implementation.
 
 import type { EyeState, MouthState } from "../animation/spriteLoader";
+import type { EmotionId } from "../emotion/emotions";
 import type { AnimationName } from "../types/cat";
 
 /** A pose the user can photograph. Every entry is an existing animation. */
@@ -46,15 +47,26 @@ export interface PhotoExpression {
   label: string;
   eyes: EyeState | null;
   mouth: MouthState | null;
+  /** A whole feeling at full strength: brows, ears, head tilt, tears, paws (emotion/expression.ts). */
+  emotion?: EmotionId;
 }
 
 export const PHOTO_EXPRESSIONS: readonly PhotoExpression[] = [
   { id: "as-posed", label: "As posed", eyes: null, mouth: null },
-  { id: "happy", label: "Happy", eyes: "happy", mouth: "smile" },
+  { id: "happy", label: "Happy", eyes: "happy", mouth: "smile", emotion: "happy" },
   { id: "wide", label: "Wide", eyes: "wide", mouth: "open" },
-  { id: "sleepy", label: "Sleepy", eyes: "half", mouth: "none" },
+  { id: "sleepy", label: "Sleepy", eyes: "half", mouth: "none", emotion: "sleepy" },
   { id: "closed", label: "Content", eyes: "closed", mouth: "smile" },
   { id: "surprised", label: "Surprised", eyes: "surprised", mouth: "open" },
+  // Whole feelings, the same ones the desktop cat shows.
+  { id: "sad", label: "Sad", eyes: null, mouth: null, emotion: "sad" },
+  { id: "crying", label: "Crying", eyes: null, mouth: null, emotion: "crying" },
+  { id: "savage", label: "Savage", eyes: null, mouth: null, emotion: "savage" },
+  { id: "victory", label: "Victory", eyes: null, mouth: null, emotion: "victory" },
+  { id: "shy", label: "Shy", eyes: null, mouth: null, emotion: "shy" },
+  { id: "angry", label: "Angry", eyes: null, mouth: null, emotion: "angry" },
+  { id: "curious", label: "Curious", eyes: null, mouth: null, emotion: "curious" },
+  { id: "excited", label: "Excited", eyes: null, mouth: null, emotion: "excited" },
 ];
 
 export const DEFAULT_POSE_ID = "sit";
@@ -62,6 +74,11 @@ export const DEFAULT_EXPRESSION_ID = "as-posed";
 
 export function findPose(id: string): PhotoPose {
   return PHOTO_POSES.find((p) => p.id === id) ?? PHOTO_POSES[0];
+}
+
+/** A whole feeling rather than a face (it changes nothing but the emotion). */
+export function isFeeling(e: PhotoExpression): boolean {
+  return !!e.emotion && e.eyes === null && e.mouth === null;
 }
 
 export function findExpression(id: string): PhotoExpression {

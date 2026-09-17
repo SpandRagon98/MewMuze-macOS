@@ -24,11 +24,14 @@ import {
   frontLimbs,
   type CostumeLayer,
   type CostumePainter,
+  type CostumeTraits,
   type PoseSpec,
 } from "../animation/spriteLoader";
-import { S, Surface, pxPoly, pxRect, stampSleeve, type Ctx, type Torso } from "./pixelSurface";
+import { S, Surface, pxPoly, pxRect, shift, stampSleeve, type Ctx, type Torso } from "./pixelSurface";
 
 export const CYBERPUNK_CAT_ID = "mewmuze.cyberpunk-cat.v1";
+/** The visor tints the eyes and sits on the brow line. */
+export const CYBERPUNK_TRAITS: CostumeTraits = { coversEyes: true, hidesBrows: true };
 
 /**
  * The jacket colours offered in Settings.
@@ -64,34 +67,26 @@ interface Palette {
   rim: string;
 }
 
-function clamp255(v: number): number {
-  return v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
-}
-
-function shift(hex: string, factor: number, lift = 0): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = clamp255(((n >> 16) & 255) * factor + lift);
-  const g = clamp255(((n >> 8) & 255) * factor + lift);
-  const b = clamp255((n & 255) * factor + lift);
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
-}
 
 function paletteFor(hex: string): Palette {
   return {
     base: hex,
     // A puffer's panels catch a lot of light; the lift keeps the highlight
     // from just looking like a paler version of the same flat colour.
-    lit: shift(hex, 1.0, 40),
+    lit: shift(hex, 1.0, 24),
     // One bright line along the crown of each tube. Without it the shading
     // reads as flat stripes rather than as rows of stuffed cylinders.
-    spec: shift(hex, 1.0, 100),
-    shade: shift(hex, 0.7),
+    spec: shift(hex, 1.0, 60),
+    shade: shift(hex, 0.8),
     // The contact shadow where one tube sits against the next. A line of the
     // shadow tone, not black - black against neon looks like damage.
-    seam: shift(hex, 0.48),
+    seam: shift(hex, 0.64),
     rim: shift(hex, 1.0, 95),
   };
 }
+
+const ZIP = "#c9d1da";
+const ZIP_DARK = "#5d6673";
 
 const VISOR_FRAME = "#dfe6ee";
 const VISOR_EDGE = "#8e9aa6";
@@ -131,79 +126,118 @@ function hemLag(pose: PoseSpec): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Two collar wings meeting at the throat and flaring apart down the chest.
+ * A padded stand collar, wrapped round the neck and up under the jaw.
  *
- * Drawn UNCLIPPED and before the jacket body: the torso ellipse stops short of
- * the head, and bare fur in that gap is what made the first version look like
- * a floating blob instead of a coat. The V between the wings is left empty on
- * purpose - the cat's own chest shows through an open jacket.
+ * On the FACE layer, deliberately: the renderer draws the head after the torso
+ * layer, so a collar painted there is always covered by the skull.
+ *
+ * Its top edge follows the curve under the jaw - highest at the sides, where it
+ * wraps round - and stays clear of the mouth at 6.4 head-units below centre.
+ * Narrower than the shoulders: at shoulder width it read as shoulder pads.
  */
-function drawCollar(ctx: Ctx, torso: Torso, head: Torso, p: Palette, side: boolean): void {
-  // From just inside the skull down to well inside the shoulders, so there is
-  // overlap at both ends and no seam can open up as the head bobs.
-  const top = head.y + head.ry * 0.45;
-  const bottom = torso.y - torso.ry * 0.35;
-  if (bottom <= top) return;
-  // Wide. A narrow collar left the cat's pale chest showing either side of it,
-  // which read as the jacket not being attached to anything.
-  const half = side ? torso.rx * 0.54 : torso.rx * 0.70;
-  const flare = side ? torso.rx * 0.84 : torso.rx * 1.02;
-  // In profile the neck runs diagonally from the shoulder up to the jaw, and
-  // it is nowhere near the torso's centre. Anchoring on the torso alone put
-  // the collar over the ribs and left the whole throat and chest bare;
-  // weighted toward the jaw, it covers the shoulder sweep the renderer draws
-  // between the two.
-  const shoulder = torso.x + torso.rx * 0.5;
-  const jaw = head.x - head.rx * 0.42;
-  const cx = side ? shoulder * 0.35 + jaw * 0.65 : torso.x;
-  const h = bottom - top;
-
-  if (side) {
-    // In profile the collar is one raised band around the neck; there is no V
-    // to see from here.
-    pxPoly(ctx, [
-      [cx - half, top],
-      [cx + half, top],
-      [cx + flare, bottom],
-      [cx - flare * 0.75, bottom],
-    ], p.base);
-    pxRect(ctx, cx - half, top, half * 2, h * 0.36, p.lit);
-    pxRect(ctx, cx - half * 0.9, top + h * 0.04, half * 1.8, h * 0.10, p.spec);
-    pxRect(ctx, cx - flare * 0.70, bottom - h * 0.26, flare * 1.4, h * 0.26, p.shade);
-    return;
-  }
-
+function standCollarFront(ctx: Ctx, skull: Torso, torso: Torso, p: Palette): void {
+  const hs = skull.rx / 12.3;
+  const half = skull.rx * 0.46;
+  const flare = torso.rx * 0.78;
+  const bottom = torso.y - torso.ry * 0.5;
+  const jaw = (x: number): number => {
+    const n = (x - skull.x) / skull.rx;
+    return skull.y + skull.ry * 0.86 * Math.sqrt(Math.max(0, 1 - n * n));
+  };
+  if (bottom <= jaw(skull.x)) return;
+  const gapTop = 0.55 * hs;
+  const gapBottom = 1.8 * hs;
+  const steps = 10;
   for (const d of [-1, 1] as const) {
-    // Near-closed at the throat, wide open by the chest: that taper is what
-    // reads as an unzipped jacket rather than a hole in one.
+    const xAt = (f: number): number => skull.x + d * (gapTop + (half - gapTop) * f);
+    // The wing: under the jaw along the top, out to the flare at the bottom.
+    const top: number[][] = [];
+    for (let i = 0; i <= steps; i++) {
+      const x = xAt(i / steps);
+      top.push([x, jaw(x)]);
+    }
+    pxPoly(ctx, [...top, [skull.x + d * flare, bottom], [skull.x + d * gapBottom, bottom]], p.base);
+    // Padded roll along the top edge, then the underside in shade.
+    const roll: number[][] = [];
+    for (let i = 0; i <= steps; i++) {
+      const x = xAt(i / steps);
+      roll.push([x, jaw(x)]);
+    }
+    const rollDepth = (bottom - jaw(skull.x)) * 0.36;
+    for (let i = steps; i >= 0; i--) {
+      const x = xAt(i / steps);
+      roll.push([x + d * (flare - half) * 0.2 * (i / steps), jaw(x) + rollDepth]);
+    }
+    pxPoly(ctx, roll, p.lit);
+    const spec: number[][] = [];
+    for (let i = 1; i < steps; i++) {
+      const x = xAt(i / steps);
+      spec.push([x, jaw(x) + rollDepth * 0.22]);
+    }
+    for (let i = steps - 1; i >= 1; i--) {
+      const x = xAt(i / steps);
+      spec.push([x, jaw(x) + rollDepth * 0.4]);
+    }
+    pxPoly(ctx, spec, p.spec);
     pxPoly(ctx, [
-      [cx + d * half * 0.20, top],
-      [cx + d * half, top],
-      [cx + d * flare, bottom],
-      [cx + d * flare * 0.40, bottom],
-    ], p.base);
-    // Lit roll along the top of the wing, with a bright crown line on it.
+      [skull.x + d * gapBottom, bottom - rollDepth * 0.7],
+      [skull.x + d * flare * 0.92, bottom - rollDepth * 0.7],
+      [skull.x + d * flare, bottom],
+      [skull.x + d * gapBottom, bottom],
+    ], p.shade);
+    // Neon piping down the open edge.
     pxPoly(ctx, [
-      [cx + d * half * 0.22, top],
-      [cx + d * half * 0.96, top],
-      [cx + d * flare * 0.86, top + h * 0.38],
-      [cx + d * flare * 0.42, top + h * 0.38],
-    ], p.lit);
-    pxPoly(ctx, [
-      [cx + d * half * 0.26, top + h * 0.06],
-      [cx + d * half * 0.92, top + h * 0.06],
-      [cx + d * flare * 0.80, top + h * 0.20],
-      [cx + d * flare * 0.46, top + h * 0.20],
-    ], p.spec);
-    // Neon piping down the open edge - the one line that says cyberpunk from
-    // across a desktop.
-    pxPoly(ctx, [
-      [cx + d * half * 0.20, top],
-      [cx + d * half * 0.36, top],
-      [cx + d * flare * 0.56, bottom],
-      [cx + d * flare * 0.40, bottom],
+      [skull.x + d * gapTop, jaw(skull.x + d * gapTop)],
+      [skull.x + d * (gapTop + 0.4), jaw(skull.x + d * (gapTop + 0.4))],
+      [skull.x + d * (gapBottom + 0.4), bottom],
+      [skull.x + d * gapBottom, bottom],
     ], p.rim);
   }
+  // Zipper pull at the bottom of the V: a metal tab, the detail that says the
+  // collar is a zipped jacket rather than two flaps.
+  pxRect(ctx, skull.x - 0.5 * hs, bottom - 2.1 * hs, 1.0 * hs, 1.7 * hs, ZIP);
+  pxRect(ctx, skull.x - 0.2 * hs, bottom - 1.7 * hs, 0.4 * hs, 0.5 * hs, ZIP_DARK);
+}
+
+/**
+ * The collar in profile: a padded ring round the base of the neck.
+ *
+ * Built ACROSS the neck, perpendicular to it. Two earlier versions ran along
+ * the neck from shoulder to jaw, and anything drawn along that axis reads as
+ * a hook sticking out of the throat. The axis is taken from the same shoulder
+ * and jaw points drawSide sweeps the neck between, so the ring sits on the
+ * neck the renderer actually draws, on every breed and pose.
+ */
+function standCollarSide(ctx: Ctx, skull: Torso, torso: Torso, p: Palette): void {
+  const hs = skull.rx / 10.2;
+  const shoulder = { x: torso.x + torso.rx * 0.5, y: torso.y - 0.2 };
+  const jawBase = { x: skull.x - skull.rx * 0.42, y: skull.y + skull.ry * 0.42 };
+  const ax = jawBase.x - shoulder.x;
+  const ay = jawBase.y - shoulder.y;
+  const len = Math.hypot(ax, ay) || 1;
+  const up = { x: ax / len, y: ay / len };
+  // Across the neck, pointing forward so "front" is the throat side.
+  const across = up.y <= 0 ? { x: -up.y, y: up.x } : { x: up.y, y: -up.x };
+  const c = { x: shoulder.x + ax * 0.34, y: shoulder.y + ay * 0.34 };
+  const wide = 3.6 * hs;
+  const thick = 1.6 * hs;
+  const ring = (w: number, t: number, lift: number): number[][] => {
+    const pts: number[][] = [];
+    for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * Math.PI * 2;
+      pts.push([
+        c.x + across.x * w * Math.cos(a) + up.x * (t * Math.sin(a) + lift),
+        c.y + across.y * w * Math.cos(a) + up.y * (t * Math.sin(a) + lift),
+      ]);
+    }
+    return pts;
+  };
+  pxPoly(ctx, ring(wide, thick, 0), p.shade);
+  pxPoly(ctx, ring(wide * 0.94, thick * 0.78, thick * 0.18), p.base);
+  pxPoly(ctx, ring(wide * 0.8, thick * 0.34, thick * 0.5), p.lit);
+  // Neon piping where the collar opens, on the throat side.
+  const tip = { x: c.x + across.x * wide * 0.86, y: c.y + across.y * wide * 0.86 };
+  pxRect(ctx, tip.x - 0.25, tip.y - thick * 0.8, 0.5, thick * 1.6, p.rim);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +302,10 @@ function puffBaffle(
   s.rect(ix, top + h * 0.74, iw, h * 0.26, p.shade);
   s.rect(ix, top, iw, h * 0.07, p.seam);
   s.rect(ix, top + h * 0.16, iw, h * 0.22, p.lit);
-  s.rect(ix, top + h * 0.22, iw, h * 0.06, p.spec);
+  s.rect(ix, top + h * 0.23, iw, h * 0.04, p.spec);
+  // One soft dithered step into the shadow - enough to round the tube and read
+  // as pixel art. Three of them laid a checkerboard over the whole jacket.
+  s.dither(ix, top + h * 0.64, iw, h * 0.1, p.shade);
 }
 
 /** Rows of baffles, spaced as a fraction of the live body height. */
@@ -615,13 +652,16 @@ export function cyberpunkPainter(colour: string): CostumePainter {
   const p = paletteFor(resolveCyberpunkColour(colour));
 
   return (ctx: Ctx, pose: PoseSpec, layer: CostumeLayer): void => {
-    const { torso, head, skull, faces } = bodyAnchors(pose);
+    const { torso, skull, faces } = bodyAnchors(pose);
 
     if (layer === "face") {
       // No visor from behind - there is no face to put it on.
       if (pose.view === "back") return;
       ctx.save();
       ctx.scale(1 / S, 1 / S);
+      // Collar first, so the visor's lower rim still sits over it.
+      if (pose.view === "side") standCollarSide(ctx, skull, torso, p);
+      else standCollarFront(ctx, skull, torso, p);
       if (pose.view === "side") drawVisorSide(ctx, skull, p, pose.tailPhase);
       else drawVisorFront(ctx, skull, p, pose.tailPhase);
       ctx.restore();
@@ -666,9 +706,6 @@ export function cyberpunkPainter(colour: string): CostumePainter {
 
     ctx.save();
     ctx.scale(1 / S, 1 / S);
-    // Collar first and unclipped, so the jacket body overlaps its lower edge
-    // rather than the other way round.
-    if (pose.view !== "back") drawCollar(ctx, t, head, p, side);
     const s = new Surface(ctx, t, side && faces === -1);
     if (side) drawSideJacket(s, t, p, lag);
     else if (pose.view === "back") drawBackJacket(s, t, p, lag);

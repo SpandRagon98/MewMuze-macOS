@@ -360,6 +360,30 @@ export const ANIMATIONS: Record<AnimationName, AnimationDef> = {
     next: "idle",
     minDuration: 0.5,
   },
+  // Persona reactions - combinations of existing eyes/mouth/props, no new art.
+  // Savage Bestie: a sly side-eye with a smirk.
+  sideEye: {
+    fps: 3,
+    loop: false,
+    frames: [
+      pose({ body: "sit", eyes: "half", pupilX: 1, mouth: "smile", ears: "perk", tail: "flick" }),
+      pose({ body: "sit", eyes: "half", pupilX: 1, mouth: "smile", ears: "perk", tail: "curl", headBob: 1 }),
+      pose({ body: "sit", eyes: "half", pupilX: -1, mouth: "smile", ears: "up", tail: "flick" }),
+    ],
+    next: "idle",
+    minDuration: 1,
+  },
+  // Love Guru: a small, blushing heart moment.
+  loveHearts: {
+    fps: 3,
+    loop: false,
+    frames: [
+      pose({ body: "sit", eyes: "happy", mouth: "smile", tail: "up", hearts: true, blush: true }),
+      pose({ body: "sit", eyes: "happy", mouth: "smile", tail: "flick", headBob: 1, hearts: true, blush: true }),
+    ],
+    next: "idle",
+    minDuration: 1.2,
+  },
 
   // ---- Productivity / expressions ---------------------------------------
   knead: {
@@ -805,6 +829,8 @@ const VIEW_BY_ANIM: Record<AnimationName, CatView> = {
   edgePeek: "front",
   angry: "front",
   alarmClap: "front",
+  sideEye: "front",
+  loveHearts: "front",
 };
 
 // Apply the view to every animation definition, and bake it into each frame so

@@ -24,6 +24,7 @@ import {
   zoneAbbreviation,
 } from "../calctime/timezones";
 import "./calctime.css";
+import { Icon } from "./icons";
 
 /**
  * Calculator · Units · Time.
@@ -297,9 +298,11 @@ export function CalcTimePanel({
       }}
     >
       <div className="qt-head">
-        <span className="qt-title">🧮 Calc &amp; Time</span>
+        <span className="qt-title">
+          <Icon name="calc" size={18} /> Calculator &amp; Time
+        </span>
         <button className="qt-x" onClick={onClose} title="Close">
-          ✕
+          <Icon name="close" size={16} />
         </button>
       </div>
 

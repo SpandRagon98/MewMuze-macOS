@@ -54,7 +54,7 @@ describe("what can be photographed", () => {
 
   it("every other expression actually overrides something", () => {
     for (const e of PHOTO_EXPRESSIONS.filter((x) => x.id !== DEFAULT_EXPRESSION_ID)) {
-      expect(e.eyes !== null || e.mouth !== null, e.label).toBe(true);
+      expect(e.eyes !== null || e.mouth !== null || !!e.emotion, e.label).toBe(true);
     }
   });
 
@@ -176,7 +176,8 @@ describe("settings stay backward compatible", () => {
     expect(loaded.photoFolder).toBe("");
     // ...and nothing else was disturbed on the way through.
     expect(loaded.userName).toBe("Spandy");
-    expect(loaded.uiTheme).toBe("light");
+    // The retired light/dark switch is dropped, not carried forward.
+    expect("uiTheme" in loaded).toBe(false);
   });
 
   it("keeps a folder the user chose, and rejects a non-string", () => {

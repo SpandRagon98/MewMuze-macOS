@@ -54,7 +54,7 @@ describe("licence gate", () => {
   });
 
   it("directs purchasers to the Dodo email before asking for their key", () => {
-    expect(gateSource).toContain("IMPORTANT — CHECK YOUR EMAIL");
+    expect(gateSource).toContain("Your key is in your email");
     expect(gateSource).toContain("Dodo Payments sent your MewMuze licence key");
     expect(gateSource).toMatch(/Spam and Promotions/i);
   });

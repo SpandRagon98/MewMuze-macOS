@@ -22,7 +22,10 @@ use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const KEYRING_SERVICE: &str = "com.spandan.pixelcat";
+// Paper: its own credential-vault namespace. Sharing "com.spandan.pixelcat" with
+// Pro let the experiment read, refresh - and potentially deactivate - the
+// production licence. Paper must never touch Pro's licence state.
+const KEYRING_SERVICE: &str = "com.spandan.pixelcat.paper";
 const KEYRING_ACCOUNT: &str = "trial-anchor";
 
 fn default_schema_version() -> u16 {

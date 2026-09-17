@@ -492,7 +492,7 @@ fn verify_package(path: &Path) -> Result<VerifiedPackage, String> {
     let file = File::open(path).map_err(|e| format!("MewMuze could not open that package: {e}"))?;
     let mut archive = ZipArchive::new(file)
         .map_err(|_| "That file is not a valid costume archive.".to_string())?;
-    if archive.len() == 0 || archive.len() > MAX_ENTRIES {
+    if archive.is_empty() || archive.len() > MAX_ENTRIES {
         return Err("The costume archive contains an invalid number of files.".into());
     }
     let mut total = 0u64;
@@ -961,8 +961,7 @@ mod tests {
     #[test]
     fn expired_and_malformed_tokens_are_rejected() {
         assert!(validate_mock_token("https://example.com/file").is_err());
-        let expired = format!("mock_space-explorer_1_abcdefgh");
-        assert!(validate_mock_token(&expired).is_err());
+        assert!(validate_mock_token("mock_space-explorer_1_abcdefgh").is_err());
     }
 
     #[test]
