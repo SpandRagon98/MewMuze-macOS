@@ -8,6 +8,9 @@
 #
 #   scripts/build-whisper-macos.sh            # -> src-tauri/binaries/whisper-cli-<triple>
 #
+# macOS 13.3 minimum: whisper's Accelerate path calls cblas_sgemm, which Apple
+# introduced in 13.3 (the same floor as llama.cpp's own macOS build).
+#
 # Portable on purpose: GGML_NATIVE=OFF, or the binary would use whatever the
 # CI machine's CPU supports and crash with an illegal instruction elsewhere.
 set -euo pipefail
@@ -32,7 +35,7 @@ if [ ! -x "$WORK/build/bin/whisper-cli" ]; then
   cmake -S "$WORK/src" -B "$WORK/build" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 \
     -DBUILD_SHARED_LIBS=OFF \
     -DGGML_NATIVE=OFF \
     -DGGML_METAL=ON \
@@ -47,8 +50,9 @@ BIN="$WORK/build/bin/whisper-cli"
 lipo -info "$BIN"
 lipo -info "$BIN" | grep -q arm64  || { echo "whisper-cli is missing the arm64 slice" >&2; exit 1; }
 lipo -info "$BIN" | grep -q x86_64 || { echo "whisper-cli is missing the x86_64 slice" >&2; exit 1; }
-# Static: nothing beyond the system's own libraries and frameworks.
-if otool -L "$BIN" | tail -n +2 | grep -v -E '^\s*(/usr/lib/|/System/Library/)'; then
+# Static: nothing beyond the system's own libraries and frameworks. A fat
+# binary prints one "<path> (architecture ...):" header per slice - skip those.
+if otool -L "$BIN" | grep -v -E ':$' | grep -v -E '^\s*(/usr/lib/|/System/Library/)'; then
   echo "whisper-cli links something outside the OS" >&2
   exit 1
 fi

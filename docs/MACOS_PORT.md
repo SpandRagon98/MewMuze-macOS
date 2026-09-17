@@ -40,10 +40,10 @@ base = Pro). Identity is Paper's, so it installs beside MewMuze Pro:
 | Dictation shortcut default | Ctrl+Alt+Space | Cmd+Shift+Space (Ctrl+Option+Space is macOS's input-source switch) |
 | Approximate device location | Windows Geolocation | **not yet** - the button is hidden; the city search works |
 
-Local AI needs a newer macOS than the app: Voice needs macOS 11 (this build's
-deployment target) and Chat needs macOS 13.3 (llama.cpp's own macOS build,
-read from the arm64 binary). The app says so instead of failing; everything
-else still runs on 10.15.
+Local AI needs a newer macOS than the app: 13.3 for both Voice (whisper's
+Accelerate path calls `cblas_sgemm`, new in 13.3) and Chat (llama.cpp's own
+macOS build, read from the arm64 binary). The app says so instead of failing;
+everything else still runs on 10.15.
 
 ### Building on a Mac
 
