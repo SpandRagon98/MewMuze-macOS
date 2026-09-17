@@ -8,14 +8,19 @@
       and Calendar (.ics) connectors the user explicitly configures, and by the
       updater. Nothing else leaves the machine.
 
+      Local Voice (optional) records only between an explicit Start and Stop,
+      so it needs the microphone entitlement below; mic ACTIVITY for the cat's
+      reactions is still read from CoreAudio device state without opening it.
+
       Deliberately NOT requested:
-        - com.apple.security.device.audio-input  (mic ACTIVITY is read from
-          CoreAudio device state; audio is never opened, so no mic permission
-          and no purple menu-bar indicator)
         - camera, contacts, calendars, photos, location
         - file access beyond the user-chosen .mewcostume package
     -->
     <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Local Voice: the recorder and dictation (Hardened Runtime requires it). -->
+    <key>com.apple.security.device.audio-input</key>
     <true/>
 
     <!-- Hardened Runtime is required for notarisation. JIT is needed by the

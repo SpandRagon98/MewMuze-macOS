@@ -1,14 +1,23 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "resources": {
-      "lib/libpdfium.dylib": "libpdfium.dylib"
-    }
+      "lib/libpdfium.dylib": "libpdfium.dylib",
+      "../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+    },
+    "externalBin": [
+      "binaries/whisper-cli"
+    ]
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://mewmuze.com/updates/macos/latest.json"]
+      "endpoints": [
+        "https://mewmuze.com/updates/paper/macos/latest.json"
+      ]
     }
   }
 }

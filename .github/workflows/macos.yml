@@ -137,12 +137,28 @@ jobs:
           lipo -info src-tauri/lib/libpdfium.dylib | grep -q '${{ matrix.arch }}' \
             || { echo "PDFium is missing the ${{ matrix.arch }} slice"; exit 1; }
 
+      - name: Cache whisper-cli build
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target/whisper-build
+          key: whisper-cli-b4938-universal-${{ hashFiles('scripts/build-whisper-macos.sh') }}
+
+      - name: Build whisper-cli (Local Voice, bundled)
+        # whisper.cpp ships no macOS command-line build, so the app carries
+        # its own: pinned b4938, universal, static, Metal shaders embedded.
+        run: bash scripts/build-whisper-macos.sh
+
       - name: Clippy (macOS cfg branches included)
         # This is the first time anything compiles the macOS-only modules.
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} --all-targets
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} 2>&1 | tee rust-tests-${{ matrix.arch }}.log
+
+      - name: Real Local Chat runtime (download, verify, unpack, start)
+        # The pinned llama.cpp macOS build for this architecture, through the
+        # app's own downloader and extractor, then `llama-server --version`.
+        run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }} -- --ignored real_macos_chat_runtime --nocapture 2>&1 | tee -a rust-tests-${{ matrix.arch }}.log
 
       - name: Build .app and .dmg
         # Unsigned/ad-hoc. Signing and notarisation need Apple credentials that
@@ -157,15 +173,19 @@ jobs:
       - name: Inspect the bundle
         run: |
           set -euo pipefail
-          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app"
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze Paper.app"
           test -d "$APP"
           echo "--- executable architecture ---"
-          lipo -info "$APP/Contents/MacOS/MewMuze"
-          lipo -info "$APP/Contents/MacOS/MewMuze" | grep -q '${{ matrix.arch }}' \
+          lipo -info "$APP/Contents/MacOS/MewMuzePaper"
+          lipo -info "$APP/Contents/MacOS/MewMuzePaper" | grep -q '${{ matrix.arch }}' \
             || { echo "executable is not ${{ matrix.arch }}"; exit 1; }
           echo "--- required Info.plist keys ---"
           /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "com.spandan.pixelcat.paper"
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$APP/Contents/Info.plist"
+          echo "--- bundled whisper-cli ---"
+          lipo -info "$APP/Contents/MacOS/whisper-cli"
+          "$APP/Contents/MacOS/whisper-cli" --help > /dev/null
           echo "--- bundled PDFium ---"
           DYLIB=$(find "$APP" -name 'libpdfium.dylib' -print -quit)
           test -n "$DYLIB" || { echo "libpdfium.dylib is missing from the bundle"; exit 1; }
@@ -178,6 +198,24 @@ jobs:
           echo "--- size ---"
           du -sh "$APP"
 
+      - name: Local Voice transcribes with the bundled engine
+        # The exact arguments local_ai.rs passes, against the pinned model the
+        # app downloads and whisper.cpp's own sample recording.
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze Paper.app"
+          MODEL="$RUNNER_TEMP/ggml-base-q8_0.bin"
+          curl -sSfL -o "$MODEL" https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q8_0.bin
+          echo "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9  $MODEL" | shasum -a 256 -c -
+          OUT="$RUNNER_TEMP/jfk"
+          # A CI virtual machine may not offer Metal; a real Mac does. Fall back to CPU only here.
+          "$APP/Contents/MacOS/whisper-cli" -m "$MODEL" -f src-tauri/target/whisper-build/src/samples/jfk.wav \
+              -l auto -t 3 -np -nt -oj -of "$OUT" \
+            || "$APP/Contents/MacOS/whisper-cli" -m "$MODEL" -f src-tauri/target/whisper-build/src/samples/jfk.wav \
+              -l auto -t 3 -np -nt -oj -of "$OUT" -ng
+          cat "$OUT.json" | head -c 600
+          grep -qi "ask not what your country" "$OUT.json" || { echo "transcript is wrong"; exit 1; }
+
       - name: Record artifact hashes
         run: |
           set -euo pipefail
@@ -187,14 +225,14 @@ jobs:
       - name: Upload .app
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-Pro-macOS-${{ matrix.arch }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze.app
+          name: MewMuze-Paper-macOS-${{ matrix.arch }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/macos/MewMuze Paper.app
           if-no-files-found: error
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-Pro-macOS-DMG-${{ matrix.arch }}
+          name: MewMuze-Paper-macOS-DMG-${{ matrix.arch }}
           path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             dmg-sha256-${{ matrix.arch }}.txt
@@ -244,6 +282,17 @@ jobs:
       - name: Fetch PDFium (universal)
         run: npm run fetch:pdfium
 
+      - name: Cache whisper-cli build
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target/whisper-build
+          key: whisper-cli-b4938-universal-${{ hashFiles('scripts/build-whisper-macos.sh') }}
+
+      - name: Build whisper-cli (Local Voice, bundled)
+        # whisper.cpp ships no macOS command-line build, so the app carries
+        # its own: pinned b4938, universal, static, Metal shaders embedded.
+        run: bash scripts/build-whisper-macos.sh
+
       - name: PDFium must carry BOTH slices for a universal app
         run: |
           set -euo pipefail
@@ -265,9 +314,9 @@ jobs:
       - name: Verify BOTH slices are present
         run: |
           set -euo pipefail
-          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/MewMuze.app"
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/MewMuze Paper.app"
           test -d "$APP"
-          INFO=$(lipo -info "$APP/Contents/MacOS/MewMuze")
+          INFO=$(lipo -info "$APP/Contents/MacOS/MewMuzePaper")
           echo "$INFO"
           # "Universal" is asserted here, never assumed from the target name: a
           # missing slice installs fine and then fails to launch for half the
@@ -277,21 +326,42 @@ jobs:
           DYLIB=$(find "$APP" -name 'libpdfium.dylib' -print -quit)
           test -n "$DYLIB" || { echo "libpdfium.dylib missing from bundle"; exit 1; }
           lipo -info "$DYLIB"
+          WINFO=$(lipo -info "$APP/Contents/MacOS/whisper-cli")
+          echo "$WINFO"
+          echo "$WINFO" | grep -q 'arm64'  || { echo "whisper-cli missing arm64";  exit 1; }
+          echo "$WINFO" | grep -q 'x86_64' || { echo "whisper-cli missing x86_64"; exit 1; }
           du -sh "$APP"
           shasum -a 256 "src-tauri/target/universal-apple-darwin/release/bundle/dmg/"*.dmg \
             | tee dmg-sha256-universal.txt
 
+      - name: Package the update archive (unsigned)
+        # What the in-app updater downloads: the .app as a tar.gz. It is signed
+        # OFF CI with MewMuze Paper's updater key (never stored here) - see
+        # docs/MACOS_PORT.md, "Paper update channel".
+        run: |
+          set -euo pipefail
+          B="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+          tar -czf "MewMuze Paper.app.tar.gz" -C "$B" "MewMuze Paper.app"
+          shasum -a 256 "MewMuze Paper.app.tar.gz" | tee -a dmg-sha256-universal.txt
+
+      - name: Upload the update archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: MewMuze-Paper-macOS-update-universal
+          path: MewMuze Paper.app.tar.gz
+          if-no-files-found: error
+
       - name: Upload universal .app
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-Pro-macOS-universal
-          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/MewMuze.app
+          name: MewMuze-Paper-macOS-universal
+          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/MewMuze Paper.app
           if-no-files-found: error
 
       - name: Upload universal .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: MewMuze-Pro-macOS-DMG-universal
+          name: MewMuze-Paper-macOS-DMG-universal
           path: |
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             dmg-sha256-universal.txt

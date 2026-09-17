@@ -27,5 +27,11 @@
     -->
     <key>NSAppleEventsUsageDescription</key>
     <string>MewMuze uses this only to open links you click in the Clipboard Assistant.</string>
+
+    <!-- Local Voice: the microphone opens only between an explicit Start and
+         Stop (the recorder or the dictation shortcut), and the audio is
+         transcribed on this Mac and never stored or sent anywhere. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MewMuze Paper listens only while you record or dictate, and turns your speech into text on this Mac. Nothing is sent anywhere.</string>
 </dict>
 </plist>

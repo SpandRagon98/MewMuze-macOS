@@ -217,7 +217,7 @@ mod imp_mac {
         dict: &CFDictionary<CFString, CFType>,
         key: &str,
     ) -> Option<CFDictionary<CFString, CFType>> {
-        let value = dict.find(&CFString::new(key))?;
+        let value = dict.find(CFString::new(key))?;
         if value.type_of() != CFDictionary::<CFString, CFType>::type_id() {
             return None;
         }
@@ -225,7 +225,7 @@ mod imp_mac {
     }
 
     fn num(dict: &CFDictionary<CFString, CFType>, key: &str) -> Option<f64> {
-        dict.find(&CFString::new(key))
+        dict.find(CFString::new(key))
             .and_then(|v| v.downcast::<CFNumber>())
             .and_then(|n| n.to_f64())
     }
@@ -369,7 +369,7 @@ mod imp_mac {
                 continue;
             }
             let owner = dict
-                .find(&CFString::new("kCGWindowOwnerName"))
+                .find(CFString::new("kCGWindowOwnerName"))
                 .and_then(|v| v.downcast::<CFString>())
                 .map(|s| s.to_string())
                 .unwrap_or_default();
@@ -474,6 +474,27 @@ mod imp_mac {
         (wl, wt, wr, wb)
     }
 
+
+
+    /// Frontmost normal window covering its whole display.
+    pub fn is_fullscreen_active() -> bool {
+        let wins = enumerate_windows();
+        // The window list is front-to-back, so the first layer-0 window is the
+        // frontmost one.
+        let Some(front) = wins.first() else {
+            return false;
+        };
+        for m in get_monitors() {
+            if front.left <= m.left + 2
+                && front.top <= m.top + 2
+                && front.right >= m.right - 2
+                && front.bottom >= m.bottom - 2
+            {
+                return true;
+            }
+        }
+        false
+    }
 
     #[cfg(test)]
     mod tests {
@@ -611,26 +632,6 @@ mod imp_mac {
                 assert!(wr > wl && wb > wt, "work area collapsed");
             }
         }
-    }
-
-    /// Frontmost normal window covering its whole display.
-    pub fn is_fullscreen_active() -> bool {
-        let wins = enumerate_windows();
-        // The window list is front-to-back, so the first layer-0 window is the
-        // frontmost one.
-        let Some(front) = wins.first() else {
-            return false;
-        };
-        for m in get_monitors() {
-            if front.left <= m.left + 2
-                && front.top <= m.top + 2
-                && front.right >= m.right - 2
-                && front.bottom >= m.bottom - 2
-            {
-                return true;
-            }
-        }
-        false
     }
 }
 

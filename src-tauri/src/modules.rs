@@ -28,8 +28,9 @@ use tauri::{AppHandle, Emitter, Manager};
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Kind {
     Model,
-    /// A zip of the official runtime; only `keep_exe` and DLLs are extracted.
-    RuntimeZip,
+    /// The official runtime archive (a zip on Windows, a tar.gz on macOS); only
+    /// the executable and its libraries are extracted.
+    Runtime,
 }
 
 #[derive(Debug)]
@@ -48,8 +49,44 @@ pub struct ModuleSpec {
     pub version: &'static str,
     pub model_file: &'static str,
     pub runtime_exe: &'static str,
+    /// The runtime ships inside the app instead of being downloaded (whisper on
+    /// macOS: whisper.cpp publishes no macOS command-line build, so the macOS
+    /// CI compiles one and bundles it next to the app's own executable).
+    pub runtime_bundled: bool,
     pub files: &'static [FileSpec],
 }
+
+#[cfg(target_os = "macos")]
+const WHISPER_EXE: &str = "whisper-cli";
+#[cfg(not(target_os = "macos"))]
+const WHISPER_EXE: &str = "whisper-cli.exe";
+#[cfg(target_os = "macos")]
+const LLAMA_EXE: &str = "llama-server";
+#[cfg(not(target_os = "macos"))]
+const LLAMA_EXE: &str = "llama-server.exe";
+
+const WHISPER_MODEL: FileSpec = FileSpec {
+    name: "ggml-base-q8_0.bin",
+    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q8_0.bin",
+    size: 81_768_585,
+    sha256: "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
+    kind: Kind::Model,
+};
+
+#[cfg(not(target_os = "macos"))]
+const VOICE_FILES: &[FileSpec] = &[
+    FileSpec {
+        name: "whisper-bin-x64.zip",
+        url: "https://github.com/ggml-org/whisper.cpp/releases/download/b4938/whisper-bin-x64.zip",
+        size: 8_361_840,
+        sha256: "c2a4b60edb11f7e11a9191ffb50929535527d4d91c9903dbe3e554583bbbc63d",
+        kind: Kind::Runtime,
+    },
+    WHISPER_MODEL,
+];
+/// macOS: the runtime is bundled (see `runtime_bundled`); only the model is fetched.
+#[cfg(target_os = "macos")]
+const VOICE_FILES: &[FileSpec] = &[WHISPER_MODEL];
 
 /// Local Voice: whisper.cpp (MIT) + OpenAI Whisper "base" multilingual (MIT),
 /// 8-bit GGML conversion from the whisper.cpp model repository.
@@ -58,32 +95,36 @@ pub const VOICE: ModuleSpec = ModuleSpec {
     folder: "whisper",
     version: "whisper.cpp b4938 · ggml-base-q8_0",
     model_file: "ggml-base-q8_0.bin",
-    runtime_exe: "whisper-cli.exe",
-    files: &[
-        FileSpec {
-            name: "whisper-bin-x64.zip",
-            url: "https://github.com/ggml-org/whisper.cpp/releases/download/b4938/whisper-bin-x64.zip",
-            size: 8_361_840,
-            sha256: "c2a4b60edb11f7e11a9191ffb50929535527d4d91c9903dbe3e554583bbbc63d",
-            kind: Kind::RuntimeZip,
-        },
-        FileSpec {
-            name: "ggml-base-q8_0.bin",
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q8_0.bin",
-            size: 81_768_585,
-            sha256: "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
-            kind: Kind::Model,
-        },
-    ],
+    runtime_exe: WHISPER_EXE,
+    runtime_bundled: cfg!(target_os = "macos"),
+    files: VOICE_FILES,
 };
 
-/// The llama.cpp runtime both chat tiers run on.
+/// The llama.cpp runtime both chat tiers run on: the official CPU build on
+/// Windows, the official macOS build (Metal on Apple Silicon) on a Mac.
+#[cfg(not(target_os = "macos"))]
 const LLAMA_RUNTIME: FileSpec = FileSpec {
     name: "llama-b10894-bin-win-cpu-x64.zip",
     url: "https://github.com/ggml-org/llama.cpp/releases/download/b10894/llama-b10894-bin-win-cpu-x64.zip",
     size: 18_423_620,
     sha256: "ab847167f848e1d49c9682dc6e742d1d27de23413689c7e0348d4f1477c5a389",
-    kind: Kind::RuntimeZip,
+    kind: Kind::Runtime,
+};
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const LLAMA_RUNTIME: FileSpec = FileSpec {
+    name: "llama-b10894-bin-macos-arm64.tar.gz",
+    url: "https://github.com/ggml-org/llama.cpp/releases/download/b10894/llama-b10894-bin-macos-arm64.tar.gz",
+    size: 11_139_927,
+    sha256: "443c7c22611420dee1faced2733f338ac74077562682ce895052bf871a42fd6c",
+    kind: Kind::Runtime,
+};
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const LLAMA_RUNTIME: FileSpec = FileSpec {
+    name: "llama-b10894-bin-macos-x64.tar.gz",
+    url: "https://github.com/ggml-org/llama.cpp/releases/download/b10894/llama-b10894-bin-macos-x64.tar.gz",
+    size: 11_193_227,
+    sha256: "e11cf09adc71d8efc0b527a4a3d76f65d165d2ba2684aa40f64af4ec3d3f2423",
+    kind: Kind::Runtime,
 };
 
 /// Local Chat: llama.cpp (MIT) + Qwen3-1.7B (Apache-2.0), Q4_K_M GGUF published
@@ -93,7 +134,8 @@ pub const CHAT: ModuleSpec = ModuleSpec {
     folder: "companion",
     version: "llama.cpp b10894 · Qwen3-1.7B-Q4_K_M",
     model_file: "Qwen3-1.7B-Q4_K_M.gguf",
-    runtime_exe: "llama-server.exe",
+    runtime_exe: LLAMA_EXE,
+    runtime_bundled: false,
     files: &[
         LLAMA_RUNTIME,
         FileSpec {
@@ -115,7 +157,8 @@ pub const CHAT_LITE: ModuleSpec = ModuleSpec {
     folder: "companion-lite",
     version: "llama.cpp b10894 · Qwen3-0.6B-Q4_0",
     model_file: "Qwen3-0.6B-Q4_0.gguf",
-    runtime_exe: "llama-server.exe",
+    runtime_exe: LLAMA_EXE,
+    runtime_bundled: false,
     files: &[
         LLAMA_RUNTIME,
         FileSpec {
@@ -174,6 +217,13 @@ pub fn model_path(s: &ModuleSpec) -> PathBuf {
 }
 
 pub fn runtime_path(s: &ModuleSpec) -> PathBuf {
+    if s.runtime_bundled {
+        // Tauri places an externalBin next to the app's own executable
+        // (Contents/MacOS in a bundle, target/<profile> in development).
+        if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+            return dir.join(s.runtime_exe);
+        }
+    }
     runtime_dir(s).join(s.runtime_exe)
 }
 
@@ -322,10 +372,21 @@ pub fn download_file(
     Ok(())
 }
 
-/// Extract `keep_exe` and every DLL from a runtime zip into `dest`, flattening
-/// folders. Entry names are reduced to their file name and checked, so a
-/// hostile archive cannot write outside `dest`.
-pub fn extract_runtime(zip_path: &Path, dest: &Path, keep_exe: &str) -> Result<Vec<String>, String> {
+/// A plain file name an archive may write: no folders, nothing unusual.
+fn safe_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// Extract `keep_exe` and its libraries from a runtime archive into `dest`,
+/// flattening folders: DLLs from a Windows zip, dylibs (and the version
+/// symlinks the executable loads them by) from a macOS tar.gz. Entry names are
+/// reduced to their file name and checked, so a hostile archive cannot write
+/// outside `dest`.
+pub fn extract_runtime(archive: &Path, dest: &Path, keep_exe: &str) -> Result<Vec<String>, String> {
+    if archive.to_string_lossy().ends_with(".tar.gz") {
+        return extract_tar_gz(archive, dest, keep_exe);
+    }
+    let zip_path = archive;
     let file = File::open(zip_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("Not a valid archive: {e}"))?;
     fs::create_dir_all(dest).map_err(|e| e.to_string())?;
@@ -338,8 +399,7 @@ pub fn extract_runtime(zip_path: &Path, dest: &Path, keep_exe: &str) -> Result<V
         let Some(name) = entry.enclosed_name().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())) else { continue };
         let lower = name.to_ascii_lowercase();
         let wanted = lower == keep_exe.to_ascii_lowercase() || lower.ends_with(".dll");
-        let safe = name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-        if !wanted || !safe {
+        if !wanted || !safe_name(&name) {
             continue;
         }
         let mut out = File::create(dest.join(&name)).map_err(|e| e.to_string())?;
@@ -347,6 +407,62 @@ pub fn extract_runtime(zip_path: &Path, dest: &Path, keep_exe: &str) -> Result<V
         written.push(name);
     }
     if !written.iter().any(|n| n.eq_ignore_ascii_case(keep_exe)) {
+        return Err(format!("{keep_exe} was not in the archive"));
+    }
+    Ok(written)
+}
+
+fn extract_tar_gz(archive: &Path, dest: &Path, keep_exe: &str) -> Result<Vec<String>, String> {
+    let file = File::open(archive).map_err(|e| e.to_string())?;
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let mut written = Vec::new();
+    let mut links: Vec<(String, String)> = Vec::new();
+    for entry in tar.entries().map_err(|e| format!("Not a valid archive: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("Not a valid archive: {e}"))?;
+        let path = entry.path().map_err(|e| e.to_string())?.into_owned();
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
+        let wanted = name == keep_exe || name.ends_with(".dylib");
+        if !wanted || !safe_name(&name) {
+            continue;
+        }
+        let kind = entry.header().entry_type();
+        if kind.is_symlink() {
+            // libllama.0.dylib -> libllama.0.4.0.dylib: the executable asks for
+            // the short name, so the link has to exist too - but only ever to a
+            // sibling file.
+            let target = entry.link_name().map_err(|e| e.to_string())?.map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
+            if safe_name(&target) {
+                links.push((name, target));
+            }
+            continue;
+        }
+        if !kind.is_file() {
+            continue;
+        }
+        let out_path = dest.join(&name);
+        let mut out = File::create(&out_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&out_path, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+        }
+        written.push(name);
+    }
+    for (name, target) in links {
+        let link = dest.join(&name);
+        let _ = fs::remove_file(&link);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).map_err(|e| e.to_string())?;
+        // Only the test suite extracts a macOS archive on Windows: a copy stands in.
+        #[cfg(not(unix))]
+        if dest.join(&target).is_file() {
+            fs::copy(dest.join(&target), &link).map_err(|e| e.to_string())?;
+        }
+        written.push(name);
+    }
+    if !written.iter().any(|n| n == keep_exe) {
         return Err(format!("{keep_exe} was not in the archive"));
     }
     Ok(written)
@@ -366,7 +482,20 @@ pub fn free_space(dir: &Path) -> Option<u64> {
     Some(free)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut probe = dir.to_path_buf();
+    while !probe.exists() {
+        probe = probe.parent()?.to_path_buf();
+    }
+    let path = std::ffi::CString::new(probe.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // f_bavail: blocks available to an unprivileged user, which is what we are.
+    (unsafe { libc::statvfs(path.as_ptr(), &mut st) } == 0).then(|| st.f_bavail as u64 * st.f_frsize as u64)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn free_space(_dir: &Path) -> Option<u64> {
     None
 }
@@ -382,7 +511,7 @@ fn remaining_bytes(s: &ModuleSpec) -> u64 {
     s.files
         .iter()
         .map(|f| {
-            if dir.join(f.name).exists() || (f.kind == Kind::RuntimeZip && runtime_path(s).exists()) {
+            if dir.join(f.name).exists() || (f.kind == Kind::Runtime && runtime_path(s).exists()) {
                 0
             } else {
                 f.size - fs::metadata(part_path(&dir, f)).map(|m| m.len()).unwrap_or(0).min(f.size)
@@ -402,7 +531,7 @@ pub fn install_into(
     let dir = module_dir(s);
     fs::create_dir_all(&dir).map_err(|e| DlError::Io(e.to_string()))?;
     let total: u64 = s.files.iter().map(|f| f.size).sum();
-    let need = remaining_bytes(s) + s.files.iter().filter(|f| f.kind == Kind::RuntimeZip).map(|f| f.size * 3).sum::<u64>() + DISK_MARGIN;
+    let need = remaining_bytes(s) + s.files.iter().filter(|f| f.kind == Kind::Runtime).map(|f| f.size * 3).sum::<u64>() + DISK_MARGIN;
     if let Some(msg) = free_space(&dir).and_then(|free| space_error(free, need)) {
         return Err(DlError::Io(msg));
     }
@@ -410,7 +539,7 @@ pub fn install_into(
     let mut done_before = 0u64;
     for f in s.files {
         let final_path = dir.join(f.name);
-        let installed_runtime = f.kind == Kind::RuntimeZip && runtime_path(s).exists();
+        let installed_runtime = f.kind == Kind::Runtime && runtime_path(s).exists();
         if !final_path.exists() && !installed_runtime {
             let part = part_path(&dir, f);
             let base = done_before;
@@ -429,7 +558,7 @@ pub fn install_into(
             }
             fs::rename(&part, &final_path).map_err(|e| DlError::Io(e.to_string()))?;
         }
-        if f.kind == Kind::RuntimeZip && !installed_runtime {
+        if f.kind == Kind::Runtime && !installed_runtime {
             report("installing", done_before + f.size, total);
             extract_runtime(&final_path, &runtime_dir(s), s.runtime_exe).map_err(DlError::Io)?;
             // The archive has done its job; only the runtime is kept.
@@ -786,6 +915,72 @@ mod tests {
     }
 
     #[test]
+    fn macos_runtime_extraction_keeps_the_server_its_dylibs_and_their_links() {
+        let dir = tmp("targz").parent().unwrap().join("targz");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let apath = dir.join("rt.tar.gz");
+        {
+            let gz = flate2::write::GzEncoder::new(File::create(&apath).unwrap(), flate2::Compression::fast());
+            let mut t = tar::Builder::new(gz);
+            let file = |t: &mut tar::Builder<_>, name: &str, data: &[u8]| {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(data.len() as u64);
+                h.set_mode(0o755);
+                h.set_cksum();
+                t.append_data(&mut h, name, data).unwrap();
+            };
+            let link = |t: &mut tar::Builder<_>, name: &str, target: &str| {
+                let mut h = tar::Header::new_gnu();
+                h.set_entry_type(tar::EntryType::Symlink);
+                h.set_size(0);
+                t.append_link(&mut h, name, target).unwrap();
+            };
+            file(&mut t, "llama-b1/llama-server", b"server");
+            file(&mut t, "llama-b1/libllama.0.4.0.dylib", b"lib");
+            file(&mut t, "llama-b1/llama-cli", b"not wanted");
+            file(&mut t, "llama-b1/LICENSE", b"text");
+            link(&mut t, "llama-b1/libllama.0.dylib", "libllama.0.4.0.dylib");
+            // A link may only ever point at a sibling.
+            link(&mut t, "llama-b1/libevil.dylib", "../../outside.dylib");
+            t.into_inner().unwrap().finish().unwrap();
+        }
+        let out = dir.join("runtime");
+        let mut got = extract_runtime(&apath, &out, "llama-server").unwrap();
+        got.sort();
+        assert_eq!(got, vec!["libllama.0.4.0.dylib", "libllama.0.dylib", "llama-server"]);
+        // The short name the executable loads resolves to the real library.
+        assert_eq!(fs::read(out.join("libllama.0.dylib")).unwrap(), b"lib");
+        assert!(!out.join("libevil.dylib").exists());
+        assert!(!out.join("llama-cli").exists());
+        assert!(extract_runtime(&apath, &dir.join("rt2"), "whisper-cli").is_err());
+    }
+
+    /// The real, pinned macOS runtime: downloaded, checked, unpacked by our own
+    /// extractor, and started. Network and ~11 MB, so only CI runs it:
+    /// `cargo test -- --ignored real_macos_chat_runtime`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "downloads the real llama.cpp runtime; run explicitly in macOS CI"]
+    fn real_macos_chat_runtime_installs_and_starts() {
+        let dir = std::env::temp_dir().join(format!("mewmuze-real-runtime-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let part = dir.join("runtime.part");
+        let f = &LLAMA_RUNTIME;
+        download_file(&agent(true), f.url, &part, f.size, f.sha256, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let archive = dir.join(f.name);
+        fs::rename(&part, &archive).unwrap();
+        let rt = dir.join("runtime");
+        extract_runtime(&archive, &rt, LLAMA_EXE).unwrap();
+        let out = std::process::Command::new(rt.join(LLAMA_EXE)).arg("--version").output().unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        println!("{text}");
+        assert!(out.status.success(), "llama-server did not start: {text}");
+        assert!(text.contains("10894"), "unexpected version: {text}");
+    }
+
+    #[test]
     fn catalog_is_pinned_https_with_real_hashes() {
         for s in [&VOICE, &CHAT, &CHAT_LITE] {
             for f in s.files {
@@ -794,6 +989,8 @@ mod tests {
                 assert!(f.size > 1_000_000);
             }
             assert!(s.files.iter().any(|f| f.name == s.model_file));
+            // Anything not bundled must bring its runtime with it.
+            assert_eq!(s.runtime_bundled, !s.files.iter().any(|f| f.kind == Kind::Runtime), "{}", s.id);
         }
         // The two modules never share a folder.
         assert_ne!(VOICE.folder, CHAT.folder);
@@ -836,10 +1033,10 @@ mod tests {
         let folder: &'static str = Box::leak(format!("selftest-{}", std::process::id()).into_boxed_str());
         let make = |model_url: String| -> &'static ModuleSpec {
             let files: &'static [FileSpec] = Box::leak(Box::new([
-                FileSpec { name: "rt.zip", url: Box::leak(zip_url.clone().into_boxed_str()), size: zip_bytes.len() as u64, sha256: Box::leak(zip_hash.clone().into_boxed_str()), kind: Kind::RuntimeZip },
+                FileSpec { name: "rt.zip", url: Box::leak(zip_url.clone().into_boxed_str()), size: zip_bytes.len() as u64, sha256: Box::leak(zip_hash.clone().into_boxed_str()), kind: Kind::Runtime },
                 FileSpec { name: "model.bin", url: Box::leak(model_url.into_boxed_str()), size: model.len() as u64, sha256: Box::leak(model_hash.clone().into_boxed_str()), kind: Kind::Model },
             ]));
-            Box::leak(Box::new(ModuleSpec { id: "selftest", folder, version: "test-1", model_file: "model.bin", runtime_exe: "fake-cli.exe", files }))
+            Box::leak(Box::new(ModuleSpec { id: "selftest", folder, version: "test-1", model_file: "model.bin", runtime_exe: "fake-cli.exe", runtime_bundled: false, files }))
         };
 
         let bad = make(bad_url);

@@ -23,7 +23,7 @@ import { Advanced, Page, Row, Section, Select, Toggle, slug } from "./settingsKi
  * entry on Windows, so the setting is identical - only its wording follows
  * the OS.
  */
-const IS_MAC = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent || "");
+import { IS_MAC } from "../platform";
 
 /** 1…5 — how many email cards may sit above the cat at once. */
 const STACK_CHOICES = Array.from({ length: MAIL_STACK_MAX - MAIL_STACK_MIN + 1 }, (_, i) => MAIL_STACK_MIN + i);
@@ -579,7 +579,7 @@ function ToolsPage({ s, set }: { s: Settings; set: (patch: Partial<Settings>) =>
             <input type="number" className="sk-input narrow" aria-label="Preview length" min={250} max={10000} value={clip.maxPreviewLength} onChange={(e) => setClip({ maxPreviewLength: Number(e.target.value) || 2000 })} />
           </Row>
           <Select label="Largest text it will read" value={clip.maxInputLength} options={[[25000, "25,000 characters"], [100000, "100,000 characters"], [250000, "250,000 characters"], [500000, "500,000 characters"]] as const} onChange={(v) => setClip({ maxInputLength: v })} />
-          <Row label="Apps to ignore" hint="One program name per line, e.g. KeePass.exe." stack>
+          <Row label="Apps to ignore" hint={`One program name per line, e.g. ${IS_MAC ? "1Password" : "KeePass.exe"}.`} stack>
             <textarea
               className="sk-input wide clipboard-exclusions"
               aria-label="Apps to ignore"

@@ -229,7 +229,10 @@ pub fn audio_start(max_seconds: u32) -> Result<StartInfo, String> {
                 return;
             }
         };
-        // Windows privacy settings blocking desktop apps land in either error.
+        // Privacy settings blocking the app land in either error.
+        #[cfg(target_os = "macos")]
+        let blocked = |e: String| format!("The microphone is blocked or busy ({e}). Check System Settings → Privacy & Security → Microphone.");
+        #[cfg(not(target_os = "macos"))]
         let blocked = |e: String| format!("The microphone is blocked or busy ({e}). Check Windows Settings → Privacy → Microphone.");
         let stream = match stream {
             Ok(s) => s,

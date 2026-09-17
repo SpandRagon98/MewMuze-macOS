@@ -14,6 +14,9 @@ src-tauri/gen/schemas
 # Not vendored: too large for the repo, and it should track upstream.
 src-tauri/lib/
 
+# whisper-cli for macOS, built by scripts/build-whisper-macos.sh (CI).
+src-tauri/binaries/
+
 # SECRETS — never commit these.
 # .keys/updater.key signs update manifests; .keys/license.key mints licence
 # keys. Anyone holding them can ship updates as you / forge licences.

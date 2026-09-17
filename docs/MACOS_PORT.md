@@ -1,4 +1,4 @@
-# MewMuze Pro — macOS port
+# MewMuze Paper for Mac — macOS port
 
 This tree is an independent duplicate of the Windows Pro source, taken at
 Windows commit `118c1612` (version 0.1.9) and verified byte-identical at the
@@ -6,6 +6,67 @@ moment of copying. The Windows tree at `D:\MewMuze\MewMuze-Pro` is the
 production source and is never modified from here.
 
 Everything below describes **this** tree only.
+
+---
+
+## 0. MewMuze Paper for Mac (2026-09-17)
+
+This tree now carries **MewMuze Paper** - the full feature set of
+`D:\MewMuze\MewMuze-Pro-Paper` - on top of the macOS port below. Paper's source
+was copied in as-is; only the ten macOS-port files were merged (three-way,
+base = Pro). Identity is Paper's, so it installs beside MewMuze Pro:
+
+| | MewMuze Paper for Mac |
+| --- | --- |
+| Bundle | `MewMuze Paper.app`, id `com.spandan.pixelcat.paper`, executable `MewMuzePaper` |
+| Keychain / licence namespace | `com.spandan.pixelcat.paper` |
+| Update feed | `https://mewmuze.com/updates/paper/macos/latest.json` (`tauri.macos.conf.json`) |
+| Update signing key | MewMuze Paper's `.keys/updater.key` (in the Paper repo, never here) |
+
+### What Paper needed on macOS
+
+| Paper feature | Windows | macOS (this tree) |
+| --- | --- | --- |
+| Local Chat runtime | llama.cpp b10894 CPU zip | llama.cpp b10894 macOS tar.gz per architecture, pinned + SHA-256; `.dylib` version links rebuilt on unpack; all layers on Metal on Apple Silicon |
+| Local Voice runtime | whisper.cpp b4938 zip, downloaded | whisper.cpp publishes no macOS CLI, so CI builds b4938 (commit `371b5a7`) as one universal static binary with embedded Metal shaders (`scripts/build-whisper-macos.sh`) and ships it as an `externalBin`; only the model downloads |
+| Model processes never outlive the app | Job Object | PID + executable path recorded; the next launch stops a leftover (same executable only) |
+| Model priority | below normal | nice 10 |
+| Memory guard / usage monitor | GlobalMemoryStatusEx, process counters | Mach VM statistics, `hw.memsize`, `kern.memorystatus_vm_pressure_level`, `proc_pid_rusage` |
+| Encrypted chat memory and Diary queue | DPAPI | AES-256-GCM, random key in the login Keychain |
+| Dictation "insert" | SendInput Ctrl+V | CGEvent Cmd+V; asks for Accessibility (macOS prompts once) |
+| Battery / saver | GetSystemPowerStatus | IOKit power sources + Low Power Mode |
+| Free disk space | GetDiskFreeSpaceEx | `statvfs` |
+| Microphone | privacy consent | `NSMicrophoneUsageDescription` + `com.apple.security.device.audio-input` |
+| Dictation shortcut default | Ctrl+Alt+Space | Cmd+Shift+Space (Ctrl+Option+Space is macOS's input-source switch) |
+| Approximate device location | Windows Geolocation | **not yet** - the button is hidden; the city search works |
+
+Local AI needs a newer macOS than the app: Voice needs macOS 11 (this build's
+deployment target) and Chat needs macOS 13.3 (llama.cpp's own macOS build,
+read from the arm64 binary). The app says so instead of failing; everything
+else still runs on 10.15.
+
+### Checking the macOS half from Windows
+
+`cargo check --target aarch64-apple-darwin` works with three local-only aids
+(none of them in the repo): `DOCS_RS=1` (skips objc2's C helper), Zig as the C
+compiler for `ring` (`CC_aarch64_apple_darwin`), and a `--config` patch that
+swaps cpal's CoreAudio backend for its null host (coreaudio-sys needs Apple's
+SDK headers). It type-checks everything else; CI is still the only real build.
+
+### Paper update channel (releasing a Mac update)
+
+1. Bump the version (package.json, tauri.conf.json, Cargo.toml) and push; wait
+   for the macOS workflow.
+2. Download the `MewMuze-Paper-macOS-update-universal` artifact
+   (`MewMuze Paper.app.tar.gz`) and the universal DMG.
+3. Sign the archive with Paper's key, on the Windows machine that holds it:
+   `npx tauri signer sign -f D:\MewMuze\MewMuze-Pro-Paper\.keys\updater.key -p '""' "MewMuze Paper.app.tar.gz"`
+4. `node scripts/make-macos-manifest.mjs "MewMuze Paper.app.tar.gz" https://mewmuze.com/downloads/paper/macos/ "What changed"`
+5. Upload the archive and DMG to that folder, and `latest.json` to
+   `/updates/paper/macos/latest.json`.
+
+The DMG is still unsigned and un-notarised (section 7): until a Developer ID
+exists, macOS asks users to open it with right-click → Open.
 
 ---
 

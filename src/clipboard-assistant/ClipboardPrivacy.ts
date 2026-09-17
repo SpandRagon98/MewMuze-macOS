@@ -7,6 +7,15 @@ export const DEFAULT_CLIPBOARD_EXCLUSIONS = [
   "keepass.exe",
   "keepassxc.exe",
   "lastpass.exe",
+  // macOS reports the owning app's name, lower-cased.
+  "1password",
+  "1password 7",
+  "bitwarden",
+  "dashlane",
+  "keepassxc",
+  "lastpass",
+  "keychain access",
+  "passwords",
 ];
 
 export type ClipboardRejectionReason =

@@ -76,7 +76,7 @@ pub fn get_foreground_app() -> Option<String> {
             let dict: CFDictionary<CFString, CFType> =
                 unsafe { CFDictionary::wrap_under_get_rule(*item as _) };
             let num = |k: &str| {
-                dict.find(&CFString::new(k))
+                dict.find(CFString::new(k))
                     .and_then(|v| v.downcast::<CFNumber>())
                     .and_then(|n| n.to_f64())
             };
@@ -87,7 +87,7 @@ pub fn get_foreground_app() -> Option<String> {
                 continue;
             }
             let name = dict
-                .find(&CFString::new("kCGWindowOwnerName"))
+                .find(CFString::new("kCGWindowOwnerName"))
                 .and_then(|v| v.downcast::<CFString>())
                 .map(|s| s.to_string().to_lowercase());
             return name.filter(|n| !n.is_empty());

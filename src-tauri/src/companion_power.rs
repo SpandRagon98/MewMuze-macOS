@@ -1,6 +1,7 @@
 //! Battery state and the one-off approximate location (Paper build).
 //!
-//! `power_status` is a single cheap Win32 call (no polling thread): the
+//! `power_status` is a single cheap platform call - Win32 on Windows, IOKit's
+//! power-source snapshot on macOS - with no polling thread: the
 //! companion's scheduler asks every few minutes and stretches its internet
 //! refresh while unplugged. `approx_location` runs only when the user presses
 //! "Use my approximate location", goes through Windows' own location
@@ -13,7 +14,7 @@ use serde::Serialize;
 pub struct PowerStatus {
     pub on_battery: bool,
     pub percent: Option<u8>,
-    /// Windows battery saver is on.
+    /// Windows battery saver / macOS Low Power Mode is on.
     pub os_saver: bool,
     /// The platform answered.
     pub known: bool,
@@ -37,7 +38,91 @@ pub fn power_status() -> PowerStatus {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod mac {
+    use core_foundation::array::{CFArray, CFArrayRef};
+    use core_foundation::base::{CFType, CFTypeRef, TCFType};
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::{CFString, CFStringRef};
+
+    #[link(name = "IOKit", kind = "framework")]
+    extern "C" {
+        fn IOPSCopyPowerSourcesInfo() -> CFTypeRef;
+        fn IOPSCopyPowerSourcesList(blob: CFTypeRef) -> CFArrayRef;
+        fn IOPSGetPowerSourceDescription(blob: CFTypeRef, source: CFTypeRef) -> CFDictionaryRef;
+        fn IOPSGetProvidingPowerSourceType(snapshot: CFTypeRef) -> CFStringRef;
+    }
+
+    /// (on battery, battery percent) from one IOKit snapshot; None if it is unavailable.
+    pub fn battery() -> Option<(bool, Option<u8>)> {
+        unsafe {
+            let raw = IOPSCopyPowerSourcesInfo();
+            if raw.is_null() {
+                return None;
+            }
+            let blob = CFType::wrap_under_create_rule(raw);
+            let providing = IOPSGetProvidingPowerSourceType(blob.as_CFTypeRef());
+            let on_battery = !providing.is_null() && CFString::wrap_under_get_rule(providing) == "Battery Power";
+            let list_ref = IOPSCopyPowerSourcesList(blob.as_CFTypeRef());
+            if list_ref.is_null() {
+                return Some((on_battery, None));
+            }
+            let list: CFArray<CFType> = CFArray::wrap_under_create_rule(list_ref);
+            for source in list.iter() {
+                let d = IOPSGetPowerSourceDescription(blob.as_CFTypeRef(), source.as_CFTypeRef());
+                if d.is_null() {
+                    continue;
+                }
+                let desc: CFDictionary<CFString, CFType> = CFDictionary::wrap_under_get_rule(d);
+                let num = |k: &str| desc.find(CFString::new(k)).and_then(|v| v.downcast::<CFNumber>()).and_then(|n| n.to_i64());
+                let is_internal = desc
+                    .find(CFString::new("Type"))
+                    .and_then(|v| v.downcast::<CFString>())
+                    .map(|t| t == "InternalBattery")
+                    .unwrap_or(false);
+                if !is_internal {
+                    continue;
+                }
+                let pct = match (num("Current Capacity"), num("Max Capacity")) {
+                    (Some(c), Some(m)) if m > 0 => Some(((c * 100) / m).clamp(0, 100) as u8),
+                    _ => None,
+                };
+                return Some((on_battery, pct));
+            }
+            // A desktop Mac: no internal battery, always on AC.
+            Some((false, None))
+        }
+    }
+
+    /// Low Power Mode (macOS 12+; older systems simply do not have it).
+    pub fn low_power_mode() -> bool {
+        use objc2::runtime::{AnyClass, AnyObject, Bool};
+        use objc2::{msg_send, sel};
+        let Some(cls) = AnyClass::get(c"NSProcessInfo") else { return false };
+        unsafe {
+            let info: *mut AnyObject = msg_send![cls, processInfo];
+            if info.is_null() {
+                return false;
+            }
+            let has: Bool = msg_send![info, respondsToSelector: sel!(isLowPowerModeEnabled)];
+            if !has.as_bool() {
+                return false;
+            }
+            let on: Bool = msg_send![info, isLowPowerModeEnabled];
+            on.as_bool()
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub fn power_status() -> PowerStatus {
+    let Some((on_battery, percent)) = mac::battery() else { return PowerStatus::default() };
+    PowerStatus { on_battery, percent, os_saver: mac::low_power_mode(), known: true }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 #[tauri::command]
 pub fn power_status() -> PowerStatus {
     PowerStatus::default()
@@ -87,9 +172,11 @@ fn locate() -> Result<(f64, f64), String> {
     Ok((p.Latitude, p.Longitude))
 }
 
+// ponytail: macOS would need CoreLocation (a delegate, a run loop and a new
+// permission prompt); the city picker covers it until someone asks.
 #[cfg(not(windows))]
 fn locate() -> Result<(f64, f64), String> {
-    Err("Automatic location is not available on this platform.".into())
+    Err("Automatic location isn't available on this computer yet. Choose your city instead.".into())
 }
 
 #[tauri::command]

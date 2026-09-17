@@ -10,6 +10,7 @@ import { MAX_INTERESTS, MAX_WATCHES, SHORTCUT_PATTERN } from "../companion/profi
 import { ACTIONS, LITE_RECOMMENDED_MB, MODULES, STATE_LABEL, formatBytes, notInstalled, usable, voiceChatAvailable, type ModuleAction, type ModuleId, type ModuleSpec, type ModuleStatus } from "../companion/modules";
 import { NET_SERVICES, type NetStats } from "../companion/net";
 import { deviceLocation, searchCity, type Place } from "../companion/location";
+import { IS_MAC, VAULT_NAME } from "../platform";
 import type { HistoryEntry } from "../companion/store";
 import type { WatchState } from "../companion/watchlists";
 import type { JobStats } from "../companion/scheduler";
@@ -349,11 +350,14 @@ function Awareness({ c, set, api }: { c: CompanionSettings; set: SetC; api: Comp
             </button>
           </Row>
         ))}
-        <Row label="Use my approximate location" hint={locMsg || "Asks Windows once. Nothing is tracked."}>
-          <button className="mm-btn" onClick={() => void deviceLocation().then((p) => (p ? choosePlace(p, "device") : setLocMsg("Windows location is off or unavailable — type a city instead.")))}>
-            Locate
-          </button>
-        </Row>
+        {/* ponytail: no CoreLocation on the Mac yet - the city search above covers it. */}
+        {!IS_MAC && (
+          <Row label="Use my approximate location" hint={locMsg || "Asks Windows once. Nothing is tracked."}>
+            <button className="mm-btn" onClick={() => void deviceLocation().then((p) => (p ? choosePlace(p, "device") : setLocMsg("Windows location is off or unavailable — type a city instead.")))}>
+              Locate
+            </button>
+          </Row>
+        )}
       </Section>
 
       <Section title="Interests" sub="Topics MewMuze may bring you news about.">
@@ -600,13 +604,13 @@ export function ChatWith({ value: c, onChange, localInstalled, keys = tauriProvi
       setDraft("");
       setEditing(false);
       await refresh(id);
-      setNote({ text: "Saved in Windows Credential Manager.", ok: true });
+      setNote({ text: `Saved in ${VAULT_NAME}.`, ok: true });
     } catch (e) {
       setNote({ text: String(e instanceof Error ? e.message : e) });
     }
   };
   const remove = async (id: ExternalId) => {
-    const ok = await confirmAction({ title: `Remove your ${PROVIDERS[id].name} key?`, message: "It is deleted from Windows Credential Manager. Your Diary and chat memory stay.", confirmLabel: "Remove key", danger: true });
+    const ok = await confirmAction({ title: `Remove your ${PROVIDERS[id].name} key?`, message: `It is deleted from ${VAULT_NAME}. Your Diary and chat memory stay.`, confirmLabel: "Remove key", danger: true });
     if (!ok) return;
     await keys.keyRemove(id).catch(() => undefined);
     await refresh(id);
@@ -646,7 +650,7 @@ export function ChatWith({ value: c, onChange, localInstalled, keys = tauriProvi
         <div className="mm-card">
           <Row
             label={`${PROVIDERS[ext].name} API key`}
-            hint={connected[ext] && !editing ? "Stored in Windows Credential Manager — never in settings, the Diary or logs." : `Your own key (${PROVIDERS[ext].keyHint}). ${PROVIDERS[ext].name} bills you for what you use.`}
+            hint={connected[ext] && !editing ? `Stored in ${VAULT_NAME} — never in settings, the Diary or logs.` : `Your own key (${PROVIDERS[ext].keyHint}). ${PROVIDERS[ext].name} bills you for what you use.`}
           >
             {connected[ext] && !editing ? (
               <span className="sk-stepper">
@@ -873,7 +877,7 @@ export function PrivacyBatteryPage({ value: c, onChange, api, gmailConnected, ca
   const ai = status?.ai;
   const activity = ai?.voiceBusy ? "Voice transcription is active." : ai?.chatLoaded ? "Chat is ready and using some memory." : "Nothing extra is running.";
   const rows: { what: string; badge: string; kind: "local" | "internet" | "connected" | "module"; detail: string }[] = [
-    { what: "Time and time zone", badge: "On this computer", kind: "local", detail: status?.timeZone ?? "From Windows" },
+    { what: "Time and time zone", badge: "On this computer", kind: "local", detail: status?.timeZone ?? "From this computer" },
     { what: "Learn my routine", badge: "On this computer", kind: "local", detail: c.features.routineLearning ? "On — averages only (times and busy/not), never content" : "Off" },
     { what: "Weather", badge: "Internet", kind: "internet", detail: `${NET_SERVICES.met.name} · ${c.features.weather ? "on" : "off"}` },
     { what: "City search", badge: "Internet", kind: "internet", detail: `${NET_SERVICES.nominatim.name} · only when you search` },
@@ -906,7 +910,7 @@ export function PrivacyBatteryPage({ value: c, onChange, api, gmailConnected, ca
           <span className={`mm-live-dot${ai?.voiceBusy || ai?.chatLoaded ? " busy" : ""}`} />
           <span>
             {power}
-            {p?.osSaver && " · Windows battery saver is on, so MewMuze saves power too"}
+            {p?.osSaver && ` · ${IS_MAC ? "Low Power Mode" : "Windows battery saver"} is on, so MewMuze saves power too`}
             {" · "}
             {activity}
           </span>

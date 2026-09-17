@@ -25,6 +25,11 @@ A1. whisper.cpp (Local Voice runtime)
     SHA-256:   c2a4b60edb11f7e11a9191ffb50929535527d4d91c9903dbe3e554583bbbc63d
     Files used: whisper-cli.exe, whisper.dll, ggml*.dll, llama.dll,
                parakeet.dll (all part of the ggml project), SDL2.dll (A5)
+    macOS:     the same release (commit 371b5a7561823ab2bb32142d2751e35e7534727b)
+               compiled from source by this app's build
+               (scripts/build-whisper-macos.sh) into one static, universal
+               whisper-cli with Metal; SHIPPED INSIDE the app bundle
+               (Contents/MacOS/whisper-cli) rather than downloaded.
     Licence:   MIT (text in Part C)
     Copyright (c) 2023-2026 The ggml authors
 
@@ -44,6 +49,11 @@ A3. llama.cpp (Local Chat runtime)
     SHA-256:   ab847167f848e1d49c9682dc6e742d1d27de23413689c7e0348d4f1477c5a389
     Files used: llama-server.exe and the DLLs shipped beside it
                (llama*.dll, ggml*.dll, mtmd.dll, libomp.dll - see A6)
+    macOS:     llama-b10894-bin-macos-arm64.tar.gz
+               SHA-256 443c7c22611420dee1faced2733f338ac74077562682ce895052bf871a42fd6c
+               llama-b10894-bin-macos-x64.tar.gz
+               SHA-256 e11cf09adc71d8efc0b527a4a3d76f65d165d2ba2684aa40f64af4ec3d3f2423
+               Files used: llama-server and the .dylib libraries beside it.
     Licence:   MIT (text in Part C)
     Copyright (c) 2023-2026 The ggml authors
 

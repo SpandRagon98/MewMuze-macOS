@@ -6,7 +6,8 @@
 //! conversation style (a fixed set of averages - persona/style.ts) and pending
 //! check-ins (a kind and two dates - persona/followUps.ts). The conversation
 //! itself is never stored. Everything is visible in Settings, each item can
-//! be forgotten, and each blob is encrypted on disk (Windows DPAPI).
+//! be forgotten, and each blob is encrypted on disk (Windows DPAPI, or a
+//! Keychain-held AES key on macOS).
 
 import { parseFollowUps, type FollowUp } from "./persona/followUps";
 import { STYLE_KEYS, parseStyle, type StyleProfile } from "./persona/style";
@@ -125,7 +126,7 @@ export async function saveMemory(mem: ChatMemory): Promise<void> {
   await writeBlob(STORE, mem.items.length === 0 ? null : JSON.stringify(mem));
 }
 
-/** One encrypted blob (Windows DPAPI); null deletes it. Failure = session-only memory. */
+/** One encrypted blob (DPAPI / Keychain-keyed AES); null deletes it. Failure = session-only memory. */
 async function writeBlob(name: string, text: string | null): Promise<void> {
   try {
     if (text === null) await invoke("secure_delete", { name });

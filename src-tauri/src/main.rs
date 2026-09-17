@@ -79,6 +79,7 @@ fn main() {
             overlay::init_overlay(&win)?;
             let handle = app.handle().clone();
             modules::init(&handle);
+            local_ai::reap_orphans();
             audio::sweep_temp();
             tray::build_tray(&handle)?;
             input::init_scroll_hook();

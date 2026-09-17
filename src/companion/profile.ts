@@ -6,6 +6,7 @@
 //! some of these strings end up in notifications.
 
 import { DEFAULT_MODEL } from "./providers";
+import { IS_MAC } from "../platform";
 
 export type CompanionLanguage = "auto" | "en" | "hi" | "hinglish";
 export type Personality = "cozy" | "playful" | "savage" | "minimal" | "professional";
@@ -142,7 +143,8 @@ export interface ChatSettings {
   diaryExternal: boolean;
 }
 
-export const SHORTCUT_PATTERN = /^(?:(?:Ctrl|Alt|Shift)\+){1,3}(?:[A-Z0-9]|Space|F(?:[1-9]|1[0-2]))$/;
+/** Cmd is the Mac's Command key. */
+export const SHORTCUT_PATTERN = /^(?:(?:Ctrl|Alt|Shift|Cmd)\+){1,3}(?:[A-Z0-9]|Space|F(?:[1-9]|1[0-2]))$/;
 
 export const MAX_DATES = 40;
 export const MAX_INTERESTS = 8;
@@ -179,7 +181,8 @@ export const DEFAULT_COMPANION: CompanionSettings = {
   interests: [],
   watches: [],
   batteryGuardMuted: false,
-  voice: { shortcut: "Ctrl+Alt+Space", insertMode: "paste", language: "auto", spokenPunctuation: true },
+  // Ctrl+Option+Space is macOS's own "next input source", so a Mac starts on Cmd+Shift+Space.
+  voice: { shortcut: IS_MAC ? "Cmd+Shift+Space" : "Ctrl+Alt+Space", insertMode: "paste", language: "auto", spokenPunctuation: true },
   chat: {
     rememberUseful: true, followUps: true, gentleFollowUps: false, style: "auto", showActiveMode: true, debugRouting: false, model: "auto",
     provider: "local", openaiModel: DEFAULT_MODEL.openai, anthropicModel: DEFAULT_MODEL.anthropic, diary: true, diaryExternal: true,

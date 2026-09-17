@@ -30,6 +30,8 @@ serde_json = "1"
 # Only the codecs we actually convert between, to keep the binary small.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 flate2 = "1"
+# The macOS llama.cpp runtime is published as a tar.gz.
+tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 semver = "1"
@@ -83,6 +85,11 @@ tauri-plugin-global-shortcut = "2"
 # cross-platform APIs, so the only thing needing native calls is the handful of
 # Quartz queries below (cursor, idle, event counters, window list).
 [target.'cfg(target_os = "macos")'.dependencies]
+# statvfs (free disk space before a model download).
+libc = "0.2"
+# AES-256-GCM for Local Chat's memory (Windows uses DPAPI). Already in the
+# tree through rustls, so no extra build.
+ring = "0.17"
 core-graphics = "0.24"
 core-foundation = "0.10"
 # One Objective-C message, to put the overlay one level above the Dock.
